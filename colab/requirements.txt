@@ -1,0 +1,17 @@
+torch
+torchvision
+diffusers
+transformers
+accelerate
+safetensors
+insightface
+onnxruntime-gpu
+opencv-python-headless
+rembg
+fastapi
+uvicorn
+pydantic
+httpx
+cloudflared
+Pillow
+numpy
