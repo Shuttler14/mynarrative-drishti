@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 from pydantic import model_validator
@@ -50,6 +51,17 @@ class Settings(BaseSettings):
         "http://localhost:8080",
     ]
 
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_cors(cls, values: dict) -> dict:
+        raw = values.get("CORS_ORIGINS")
+        if isinstance(raw, str):
+            try:
+                values["CORS_ORIGINS"] = json.loads(raw)
+            except json.JSONDecodeError:
+                values["CORS_ORIGINS"] = [o.strip() for o in raw.split(",") if o.strip()]
+        return values
+
     SCRAPING_RATE_LIMIT: int = 2
     SCRAPING_PROXY_URL: str = os.getenv("SCRAPING_PROXY_URL", "")
 
@@ -73,9 +85,7 @@ class Settings(BaseSettings):
                 )
         return self
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 @lru_cache
