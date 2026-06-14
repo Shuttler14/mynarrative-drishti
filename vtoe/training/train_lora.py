@@ -37,7 +37,7 @@ class EthnicVTONDataset(Dataset):
                 "mask": self._load("mask", i)[:1]}
 
 
-def train(subtype: str, data: str, epochs: int, lr: float, rank: int) -> None:
+def train(subtype: str, data: str, epochs: int, lr: float, rank: int, output: str | None = None) -> None:
     from vtoe.config import settings
     pipe = StableDiffusionXLControlNetInpaintPipeline.from_pretrained(
         settings.idm_vton, torch_dtype=torch.float16, cache_dir=settings.model_cache)
@@ -72,7 +72,7 @@ def train(subtype: str, data: str, epochs: int, lr: float, rank: int) -> None:
                 scaler.step(opt); scaler.update(); opt.zero_grad()
         print(f"epoch {epoch} loss {loss.item()*accum:.4f}")
 
-    out = f"loras/lora-{subtype}"
+    out = output or f"loras/lora-{subtype}"
     unet.save_pretrained(out)
     print(f"saved {out}")
 
@@ -84,5 +84,6 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=int, default=15)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=16)
+    ap.add_argument("--output", type=str, default=None, help="Output directory for LoRA weights")
     a = ap.parse_args()
-    train(a.subtype, a.data, a.epochs, a.lr, a.rank)
+    train(a.subtype, a.data, a.epochs, a.lr, a.rank, a.output)
