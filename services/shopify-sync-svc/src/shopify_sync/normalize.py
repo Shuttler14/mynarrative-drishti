@@ -48,9 +48,10 @@ def _classify(p: ShopifyProduct) -> tuple[str | None, str | None, str]:
 
 
 def _gender(p: ShopifyProduct) -> str | None:
+    import re
     hay = " ".join([p.product_type or "", *(_tags_list(p.tags))]).lower()
     for k, v in _GENDER.items():
-        if k in hay:
+        if re.search(r'\b' + re.escape(k) + r'\b', hay):
             return v
     return None
 

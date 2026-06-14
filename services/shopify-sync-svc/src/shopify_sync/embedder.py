@@ -3,8 +3,6 @@ import io
 from functools import lru_cache
 
 import httpx
-import torch
-import torch.nn.functional as F
 from PIL import Image
 
 from shopify_sync.config import settings
@@ -13,6 +11,7 @@ from shopify_sync.models import CanonicalProduct
 
 @lru_cache(maxsize=1)
 def _clip():
+    import torch
     from transformers import CLIPModel, CLIPProcessor
     model = CLIPModel.from_pretrained(settings.clip_model, cache_dir=settings.model_cache).to(
         settings.device).eval()
@@ -22,6 +21,9 @@ def _clip():
 
 class Embedder:
     async def embed(self, product: CanonicalProduct) -> list[float] | None:
+        import torch
+        import torch.nn.functional as F
+
         model, proc = _clip()
         img = await self._fetch_image(product.primary_image) if product.primary_image else None
         text = f"{product.brand or ''} {product.title}".strip()
