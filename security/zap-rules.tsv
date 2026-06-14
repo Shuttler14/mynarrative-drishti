@@ -1,0 +1,46 @@
+# OWASP ZAP baseline scan rules
+# Format: <rule_id> <action> <description>
+# Actions: IGNORE, WARN, FAIL
+
+# ── Ignore passive scan rules for API-only app ──
+# APIs don't set cookies, so cookie flags are irrelevant
+10010	WARN	Cookie without SameSite flag
+10011	WARN	Cookie without Secure flag
+10012	WARN	Cookie without HttpOnly flag
+
+# ── Ignore rules irrelevant for JSON API ──
+10015	WARN	Re-examine cache-control directives
+10017	WARN	Cross-domain JavaScript source inclusion
+10018	WARN	Domain property not set
+10020	WARN	Cross-domain misconfiguration
+
+# ── Warn on these (potential issues) ──
+10021	WARN	X-Content-Type-Options missing
+10023	WARN	Information disclosure - debug error messages
+10024	WARN	Information disclosure - sensitive information in URL
+10025	WARN	Information disclosure - sensitive information in HTTP Referrer header
+10027	WARN	Sensitive information in URL
+10036	WARN	Server Leaks Version via "Server" HTTP Response Header
+10038	WARN	Content Security Policy header not set
+10040	WARN	Secure pages include mixed content
+10049	WARN	Cache-Control header not set
+10050	WARN	Robots.txt not found
+
+# ── Fail on these (real vulnerabilities) ──
+40012	WARN	Cross-site scripting (Reflected)
+40014	WARN	Cross-site scripting (DOM Based)
+40016	WARN	Cross-site scripting (Persistent)
+40018	WARN	SQL Injection
+40019	WARN	SQL Injection (MySQL)
+40020	WARN	SQL Injection (Hypersonic)
+40021	WARN	SQL Injection (Oracle)
+40022	WARN	SQL Injection (PostgreSQL)
+90019	WARN	Server Side Code Injection
+90020	WARN	Remote OS Command Injection
+90021	WARN	XPath Injection
+90023	WARN	XML External Entity Attack
+90024	WARN	Generic Padding Oracle
+90025	WARN	ELMAH Information Leak
+90026	WARN	Apache Tomcat Information Leak
+90027	WARN	Java Servlets Information Leak
+90028	WARN	AJP Server Information Leak

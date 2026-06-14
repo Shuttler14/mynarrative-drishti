@@ -46,3 +46,32 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             request_id_var.reset(rtok)
             user_id_var.reset(utok)
             structlog.contextvars.clear_contextvars()
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Injects standard security headers on every response.
+
+    CSP is intentionally lenient (no script-src) since this is an API,
+    not a rendered HTML app. The headers prevent common misconfigurations:
+    clickjacking, MIME sniffing, open redirects via referrer, and cached
+    sensitive data.
+    """
+
+    _HEADERS = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-XSS-Protection": "0",              # modern browsers; 1 mode is exploitable
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    }
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        for k, v in self._HEADERS.items():
+            response.headers[k] = v
+        # HSTS only over HTTPS (skip localhost / dev)
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=63072000; includeSubDomains; preload"
+            )
+        return response
