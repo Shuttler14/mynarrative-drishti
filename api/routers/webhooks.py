@@ -98,7 +98,51 @@ async def handle_customer_created(customer: dict):
 
 
 async def handle_product_update(product: dict):
+    """Sync product to Qdrant on Shopify product create/update."""
     logger.info(f"Product updated: {product.get('title')}")
+
+    try:
+        from api.services.catalog_sync import sync_single_product, delete_single_product
+
+        shopify_id = str(product.get("id", ""))
+        if not shopify_id:
+            return
+
+        # Check if product is being deleted (published = false)
+        published = product.get("published_at")
+        if not published:
+            delete_single_product(shopify_id)
+            return
+
+        # Parse and sync
+        parsed = {
+            "shopify_id": shopify_id,
+            "title": product.get("title", ""),
+            "description": product.get("body_html", "")[:500],
+            "product_type": product.get("product_type", ""),
+            "category": product.get("product_type", "other").lower(),
+            "vendor": product.get("vendor", ""),
+            "tags": [t.lower() for t in (product.get("tags") or "").split(", ") if t],
+            "price": float(product.get("variants", [{}])[0].get("price", 0)) if product.get("variants") else 0,
+            "currency": "INR",
+            "image_url": product.get("image", {}).get("src") if product.get("image") else None,
+            "url": f"{settings.SHOPIFY_STORE_URL}/products/{product.get('handle', '')}",
+            "variants": [
+                {
+                    "id": str(v.get("id", "")),
+                    "title": v.get("title", ""),
+                    "price": float(v.get("price", 0)),
+                    "available": v.get("available", False),
+                }
+                for v in product.get("variants", [])
+            ],
+            "collections": [],
+        }
+
+        sync_single_product(parsed)
+
+    except Exception as e:
+        logger.error(f"Failed to sync product: {e}")
 
 
 @router.post("/dtf-completion")
