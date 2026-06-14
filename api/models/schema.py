@@ -179,7 +179,7 @@ class Offer(Base, TimestampMixin):
     valid_until = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
     source = Column(String(50), default="manual")
-    metadata = Column(JSON, default=dict)
+    meta = Column(JSON, default=dict)
 
 
 class UserAnalysis(Base, TimestampMixin):
@@ -206,7 +206,7 @@ class GarmentAsset(Base, TimestampMixin):
     source_image = Column(Text, nullable=False)
     segmented_image = Column(Text, nullable=True)
     mask_image = Column(Text, nullable=True)
-    metadata = Column(JSON, default=dict)
+    meta = Column(JSON, default=dict)
     quality_score = Column(Float, default=0.0)
     status = Column(String(50), default="pending")
 
