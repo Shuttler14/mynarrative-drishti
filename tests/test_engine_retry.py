@@ -40,7 +40,7 @@ def test_retries_on_low_quality_then_keeps_best(patched, person_image, garment_i
     import vtoe.pipeline.engine as e
     scores = iter([
         QualityResult(False, 0.80, 0.70, 0.75, ["face_sim<0.95"]),
-        QualityResult(False, 0.96, 0.88, 0.92, []),
+        QualityResult(True, 0.96, 0.88, 0.92, []),
     ])
     e.stage3_tryon.run = lambda *a, **k: (person_image, "idm-vton", [])
     e.stage5_quality.run = lambda *a, **k: next(scores)
