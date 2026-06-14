@@ -1,0 +1,61 @@
+name: CI Images
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'ai/**'
+      - 'scrapers/**'
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            user-svc: ['services/user-svc/**']
+            reco-svc: ['services/reco-svc/**']
+            shopify-sync: ['services/shopify-sync-svc/**']
+            scrapers: ['scrapers/**']
+
+  build-scan:
+    needs: changes
+    if: ${{ needs.changes.outputs.images != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.changes.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Resolve dir
+        id: dir
+        run: echo "path=$(.github/scripts/pkg_path.sh ${{ matrix.image }})" >> "$GITHUB_OUTPUT"
+      - name: Build image (no push on PR)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ steps.dir.outputs.path }}/Dockerfile
+          push: false
+          load: true
+          tags: drishti/${{ matrix.image }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy scan (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: drishti/${{ matrix.image }}:ci
+          format: table
+          exit-code: '1'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true

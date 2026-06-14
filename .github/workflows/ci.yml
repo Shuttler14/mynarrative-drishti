@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Detect which packages changed → only test those ──────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            user-svc: ['services/user-svc/**', 'services/shared/database/**', 'libs/**']
+            reco-svc: ['services/reco-svc/**', 'ai/ore/ifil/**', 'libs/**']
+            shopify-sync: ['services/shopify-sync-svc/**', 'services/shared/database/**', 'libs/**']
+            scrapers: ['scrapers/**', 'libs/**']
+            gap: ['ai/gap/**', 'ai/shared/**']
+            vtoe: ['ai/vtoe/**', 'ai/shared/**']
+            ifil: ['ai/ore/ifil/**']
+            vton-colab: ['vtoe/**']
+            py-observability: ['libs/py-observability/**']
+            drishti-db: ['services/shared/database/**']
+
+  # ── 2. Lint + type-check (fast, every changed Python package) ────────────
+  lint:
+    needs: changes
+    if: ${{ needs.changes.outputs.packages != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve package dir
+        id: dir
+        run: echo "path=$(.github/scripts/pkg_path.sh ${{ matrix.package }})" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-python-uv
+        with:
+          workdir: ${{ steps.dir.outputs.path }}
+      - name: Ruff (lint + format check)
+        working-directory: ${{ steps.dir.outputs.path }}
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Mypy
+        working-directory: ${{ steps.dir.outputs.path }}
+        run: uv run mypy src || true
+
+  # ── 3. Unit + integration tests (with service containers) ────────────────
+  test:
+    needs: changes
+    if: ${{ needs.changes.outputs.packages != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: drishti, POSTGRES_PASSWORD: drishti, POSTGRES_DB: drishti }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U drishti" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports: ['6333:6333']
+    env:
+      ENV: local
+      DATABASE_URL: postgresql+asyncpg://drishti:drishti@localhost:5432/drishti
+      REDIS_URL: redis://localhost:6379/0
+      QDRANT_URL: http://localhost:6333
+      LOG_LEVEL: WARNING
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve package dir
+        id: dir
+        run: echo "path=$(.github/scripts/pkg_path.sh ${{ matrix.package }})" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-python-uv
+        with:
+          workdir: ${{ steps.dir.outputs.path }}
+      - name: Generate ephemeral RS256 keys (auth tests)
+        if: matrix.package == 'user-svc'
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/priv.pem
+          openssl rsa -in /tmp/priv.pem -pubout -out /tmp/pub.pem
+          echo "USER_JWT_PRIVATE_KEY<<EOF" >> "$GITHUB_ENV"; cat /tmp/priv.pem >> "$GITHUB_ENV"; echo "EOF" >> "$GITHUB_ENV"
+          echo "USER_JWT_PUBLIC_KEY<<EOF"  >> "$GITHUB_ENV"; cat /tmp/pub.pem  >> "$GITHUB_ENV"; echo "EOF" >> "$GITHUB_ENV"
+      - name: Run tests
+        working-directory: ${{ steps.dir.outputs.path }}
+        run: uv run pytest -q -m "not gpu" --junitxml=report.xml --cov=src --cov-report=xml
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.package }}
+          path: ${{ steps.dir.outputs.path }}/coverage.xml
+          if-no-files-found: ignore
+      - name: Test summary
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: tests-${{ matrix.package }}
+          path: ${{ steps.dir.outputs.path }}/report.xml
+          reporter: java-junit
+          fail-on-error: false
+
+  # ── 4. Required gate: all matrices must pass ─────────────────────────────
+  ci-gate:
+    needs: [lint, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any upstream job failed
+        run: |
+          if [ "${{ needs.lint.result }}" = "failure" ] || \
+             [ "${{ needs.test.result }}" = "failure" ]; then
+            echo "CI gate failed"; exit 1
+          fi
+          echo "CI gate passed"
