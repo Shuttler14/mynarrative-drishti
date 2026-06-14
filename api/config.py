@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -9,6 +10,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Drishti"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    ENV: str = os.getenv("ENV", "local")
 
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
@@ -17,7 +19,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
 
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "change-me-in-production")
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "")
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRY_MINUTES: int = 60 * 24 * 7
 
@@ -50,6 +52,24 @@ class Settings(BaseSettings):
 
     SCRAPING_RATE_LIMIT: int = 2
     SCRAPING_PROXY_URL: str = os.getenv("SCRAPING_PROXY_URL", "")
+
+    @model_validator(mode="after")
+    def _fail_closed_on_secrets(self) -> "Settings":
+        weak = {"", "change-me-in-production", "secret", "changeme"}
+        if self.ENV != "local":
+            if self.JWT_SECRET in weak:
+                raise RuntimeError(
+                    "Refusing to start: JWT_SECRET is unset or uses a placeholder. "
+                    "Set a strong random secret via JWT_SECRET env var."
+                )
+            if len(self.JWT_SECRET) < 32:
+                raise RuntimeError(
+                    "Refusing to start: JWT_SECRET must be at least 32 characters."
+                )
+            if not self.SHOPIFY_WEBHOOK_SECRET:
+                import warnings
+                warnings.warn("SHOPIFY_WEBHOOK_SECRET is empty — webhooks are not HMAC-verified")
+        return self
 
     class Config:
         env_file = ".env"

@@ -14,6 +14,18 @@ from api.utils.auth import verify_token
 router = APIRouter()
 
 
+def require_admin(authorization: str = Header(None)) -> dict:
+    """Extract and verify JWT, enforce admin role. Returns payload."""
+    if not authorization:
+        raise HTTPException(401, "Missing token")
+    payload = verify_token(authorization.replace("Bearer ", ""))
+    if not payload:
+        raise HTTPException(401, "Invalid token")
+    if payload.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+    return payload
+
+
 class AdminDashboard(BaseModel):
     total_users: int = 0
     total_products: int = 0
@@ -27,15 +39,9 @@ class AdminDashboard(BaseModel):
 
 @router.get("/dashboard")
 async def get_dashboard(
-    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(require_admin),
 ):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
-
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
 
     users = (await db.execute(select(func.count(User.id)))).scalar() or 0
     products = (await db.execute(select(func.count(Product.id)))).scalar() or 0
@@ -66,15 +72,9 @@ async def get_dashboard(
 async def list_users(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(require_admin),
 ):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
-
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
 
     stmt = select(User).order_by(User.created_at.desc()).offset((page - 1) * limit).limit(limit)
     result = await db.execute(stmt)
@@ -100,15 +100,9 @@ async def list_users(
 async def list_all_products(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(require_admin),
 ):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
-
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
 
     stmt = select(Product).order_by(Product.created_at.desc()).offset((page - 1) * limit).limit(limit)
     result = await db.execute(stmt)
@@ -131,15 +125,9 @@ async def list_all_products(
 
 @router.get("/scrape-jobs")
 async def list_scrape_jobs(
-    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(require_admin),
 ):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
-
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
 
     stmt = select(ScrapeJob).order_by(ScrapeJob.created_at.desc()).limit(50)
     result = await db.execute(stmt)
@@ -163,15 +151,9 @@ async def list_scrape_jobs(
 
 @router.get("/analytics")
 async def get_analytics(
-    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(require_admin),
 ):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
-
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
 
     return {
         "daily_active_users": 0,

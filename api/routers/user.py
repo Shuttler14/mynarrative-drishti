@@ -66,7 +66,7 @@ async def send_otp(req: SendOTPRequest, db: AsyncSession = Depends(get_db)):
     db.add(record)
     await db.flush()
 
-    return {"message": "OTP sent", "otp_dev": otp}
+    return {"message": "OTP sent"}
 
 
 @router.post("/verify-otp")
@@ -108,7 +108,7 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
         db.add(user)
         await db.flush()
 
-    token = create_token({"sub": str(user.id), "exp": datetime.utcnow() + timedelta(days=7)})
+    token = create_token({"sub": str(user.id), "role": user.role or "user", "exp": datetime.utcnow() + timedelta(days=7)})
 
     return {
         "token": token,
@@ -186,7 +186,20 @@ async def update_me(
 
 
 @router.get("/{user_id}")
-async def get_user(user_id: str, db: AsyncSession = Depends(get_db)):
+async def get_user(user_id: str, authorization: str = Header(None), db: AsyncSession = Depends(get_db)):
+    if not authorization:
+        raise HTTPException(401, "Missing token")
+
+    payload = verify_token(authorization.replace("Bearer ", ""))
+    if not payload:
+        raise HTTPException(401, "Invalid token")
+
+    requesting_user_id = payload.get("sub")
+    role = payload.get("role", "user")
+
+    if requesting_user_id != user_id and role != "admin":
+        raise HTTPException(403, "Not authorized to view this user")
+
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")

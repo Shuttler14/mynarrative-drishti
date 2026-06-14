@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 from datetime import datetime
 
@@ -17,6 +18,42 @@ from api.utils.auth import verify_token
 logger = logging.getLogger("drishti.vton")
 settings = get_settings()
 router = APIRouter()
+
+
+# ── Widget → Engine payload adapter ──
+
+_MODE_MAP = {
+    "top": ("top", None),
+    "bottom": ("bottom", None),
+    "dress": ("full", None),
+    "saree": ("ethnic", "saree"),
+    "lehenga": ("ethnic", "lehenga"),
+    "kurta": ("ethnic", "kurta"),
+    "sherwani": ("ethnic", "sherwani"),
+    "dupatta": ("ethnic", "dupatta"),
+    "anarkali": ("ethnic", "anarkali"),
+    "salwar": ("ethnic", "salwar"),
+}
+
+
+class WidgetTryOnRequest(BaseModel):
+    """Shopify widget payload format."""
+    mode: str = "top"
+    user_image: str  # base64 data URI or URL
+    garment_image: str  # base64 data URI or URL
+
+
+def _widget_to_engine(req: WidgetTryOnRequest) -> dict:
+    """Translate widget payload to VTOE engine format."""
+    garment_type, ethnic_sub_type = _MODE_MAP.get(req.mode, ("top", None))
+    return {
+        "person_image": req.user_image,
+        "garment_image": req.garment_image,
+        "garment_type": garment_type,
+        "ethnic_sub_type": ethnic_sub_type,
+        "preserve_face": True,
+        "quality": "balanced",
+    }
 
 
 class VTONRequest(BaseModel):
@@ -79,6 +116,65 @@ async def create_vton_job(
         "job_id": str(job.id),
         "status": job.status,
         "message": "VTON job created",
+    }
+
+
+@router.post("/widget/try-on")
+async def widget_try_on(
+    req: WidgetTryOnRequest,
+    authorization: str = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Shopify widget endpoint — normalizes payload format before forwarding to GPU."""
+    user_id = None
+    if authorization:
+        payload = verify_token(authorization.replace("Bearer ", ""))
+        if payload:
+            user_id = payload["sub"]
+
+    engine_payload = _widget_to_engine(req)
+
+    job = VTONJob(
+        user_id=user_id,
+        garment_image=req.garment_image[:200] if len(req.garment_image) > 200 else req.garment_image,
+        person_url=req.user_image[:200] if len(req.user_image) > 200 else req.user_image,
+        status="queued",
+        vto_engine="idm-vton",
+    )
+    db.add(job)
+    await db.flush()
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{settings.VTOE_GPU_URL}/v1/try-on",
+                json={**engine_payload, "job_id": str(job.id)},
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                job.status = "completed"
+                job.result_image = result.get("result_image")
+                job.processing_time_ms = result.get("processing_time_ms")
+                job.quality_score = result.get("quality_score")
+                return {
+                    "status": "completed",
+                    "result_image": result.get("result_image"),
+                    "processing_time_ms": result.get("processing_time_ms"),
+                    "quality_score": result.get("quality_score"),
+                    "face_similarity": result.get("face_similarity"),
+                    "garment_similarity": result.get("garment_similarity"),
+                }
+            else:
+                job.status = "queued"
+                logger.warning(f"GPU worker returned {resp.status_code}")
+    except Exception as e:
+        job.status = "queued"
+        logger.warning(f"GPU worker unavailable: {e}")
+
+    return {
+        "status": job.status,
+        "job_id": str(job.id),
+        "message": "Processing",
     }
 
 
