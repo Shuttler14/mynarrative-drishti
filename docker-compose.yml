@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: drishti
       POSTGRES_USER: drishti
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-drishti_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -56,7 +56,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://drishti:${POSTGRES_PASSWORD:-drishti_secret}@postgres:5432/drishti
+      DATABASE_URL: postgresql+asyncpg://drishti:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/drishti
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
     ports:

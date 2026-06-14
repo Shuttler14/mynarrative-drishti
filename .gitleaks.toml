@@ -1,0 +1,34 @@
+# gitleaks configuration — suppress false positives in tests/config
+[allowlist]
+  description = "Global allowlist"
+  paths = [
+    '''\.env\.example$''',
+    '''\.env\.local$''',
+    '''tests/.*''',
+    '''loadtest/data/.*''',
+    '''\.github/scripts/.*''',
+  ]
+
+[[rules]]
+  id = "hardcoded-password-default"
+  description = "Hardcoded password in default config"
+  regex = '''drishti_secret'''
+  paths = [
+    '''\.env\.example$''',
+  ]
+
+[[rules]]
+  id = "test-secret"
+  description = "Test secret in test files"
+  regex = '''test-secret.*characters'''
+  paths = [
+    '''tests/.*''',
+  ]
+
+[[rules]]
+  id = "placeholder-secret"
+  description = "Placeholder secret in example files"
+  regex = '''change_me_in_production'''
+  paths = [
+    '''\.env\.example$''',
+  ]

@@ -1,0 +1,123 @@
+name: Security Audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"  # weekly Monday 6am
+
+permissions:
+  contents: read
+  security-events: write  # for codeql upload
+
+jobs:
+  # ── 1. Dependency scanning (pip-audit) ─────────────────────────────────
+  dependencies:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        req:
+          - { name: api, path: requirements.txt }
+          - { name: shopify-sync, path: services/shopify-sync-svc/pyproject.toml }
+          - { name: admin-svc, path: services/admin-svc/pyproject.toml }
+          - { name: observability, path: libs/py-observability/pyproject.toml }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Install pip-audit
+        run: uv tool install pip-audit
+      - name: Audit ${{ matrix.req.name }}
+        run: |
+          if [[ "${{ matrix.req.path }}" == *.toml ]]; then
+            cd "$(dirname ${{ matrix.req.path }})"
+            uv pip compile pyproject.toml -o /tmp/reqs.txt
+            pip-audit -r /tmp/reqs.txt --desc
+          else
+            pip-audit -r ${{ matrix.req.path }} --desc
+          fi
+
+  # ── 2. Secret scanning (gitleaks) ─────────────────────────────────────
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ── 3. SAST (CodeQL) ──────────────────────────────────────────────────
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+
+  # ── 4. Container scanning (Trivy on Dockerfile) ───────────────────────
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          exit-code: 1
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+  # ── 5. Auth/RBAC/HMAC integration tests ───────────────────────────────
+  auth-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: drishti, POSTGRES_PASSWORD: drishti, POSTGRES_DB: drishti }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U drishti" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      ENV: local
+      DATABASE_URL: postgresql+asyncpg://drishti:drishti@localhost:5432/drishti
+      JWT_SECRET: test-secret-that-is-at-least-32-characters-long-for-validation
+      SHOPIFY_WEBHOOK_SECRET: test-webhook-secret-at-least-32-characters-long
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Install deps
+        run: uv pip install --system -r requirements.txt pytest pytest-asyncio httpx
+      - name: Run auth integration tests
+        run: python -m pytest tests/security/ -v
+
+  # ── 6. Gate ────────────────────────────────────────────────────────────
+  security-gate:
+    needs: [dependencies, secrets, codeql, container, auth-integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any security job failed
+        run: |
+          if [ "${{ needs.dependencies.result }}" = "failure" ] || \
+             [ "${{ needs.secrets.result }}" = "failure" ] || \
+             [ "${{ needs.codeql.result }}" = "failure" ] || \
+             [ "${{ needs.container.result }}" = "failure" ] || \
+             [ "${{ needs.auth-integration.result }}" = "failure" ]; then
+            echo "Security gate failed"; exit 1
+          fi
+          echo "Security gate passed"

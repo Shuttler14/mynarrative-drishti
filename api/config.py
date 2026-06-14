@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+asyncpg://drishti:drishti_secret@localhost:5432/drishti",
+        "postgresql+asyncpg://drishti:drishti@localhost:5432/drishti",
     )
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -67,8 +67,10 @@ class Settings(BaseSettings):
                     "Refusing to start: JWT_SECRET must be at least 32 characters."
                 )
             if not self.SHOPIFY_WEBHOOK_SECRET:
-                import warnings
-                warnings.warn("SHOPIFY_WEBHOOK_SECRET is empty — webhooks are not HMAC-verified")
+                raise RuntimeError(
+                    "Refusing to start: SHOPIFY_WEBHOOK_SECRET is empty. "
+                    "Set a strong random secret via SHOPIFY_WEBHOOK_SECRET env var."
+                )
         return self
 
     class Config:

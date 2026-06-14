@@ -30,6 +30,7 @@ class User(Base, TimestampMixin):
     avatar_url = Column(Text, nullable=True)
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    role = Column(String(20), default="user")
     preferences = Column(JSON, default=dict)
     body_profile = Column(JSON, default=dict)
     style_profile = Column(JSON, default=dict)

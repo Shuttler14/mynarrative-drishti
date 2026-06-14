@@ -41,6 +41,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Rate limiting (CRITICAL: was never registered) ---
+from api.middleware.rate_limit import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
+
 # --- Observability: structured logging + Sentry + request-id + Prometheus ---
 try:
     from drishti_observability import setup as setup_obs
