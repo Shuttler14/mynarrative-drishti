@@ -1,0 +1,37 @@
+.git
+.github
+.gitignore
+.gitleaks.toml
+.pytest_cache
+.mypy_cache
+.venv
+venv
+node_modules
+.vercel
+
+# GPU/Colab (torch-dependent, not needed for API)
+vtoe/
+colab/
+notebooks/
+bench/
+
+# Other microservices (separate deploys)
+services/
+libs/
+infra/
+ai/
+scrapers/
+vercel/
+loadtest/
+security/
+docs/
+tests/
+
+# Dev/CI files
+docker-compose.yml
+*.md
+*.log
+.DS_Store
+.env
+.env.example
+pytest.ini

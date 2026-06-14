@@ -9,7 +9,7 @@ python-multipart==0.0.9
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 redis[hiredis]==5.0.8
-eval-params-backport==0.1.0
+qdrant-client==1.12.1
 # observability
 structlog>=24.1
 sentry-sdk[fastapi]>=2.5
