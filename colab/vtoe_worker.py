@@ -26,7 +26,17 @@ import numpy as np
 import cv2
 from PIL import Image
 
-logging.basicConfig(level=logging.INFO)
+# --- Observability: structured logging + Sentry (fail-safe) ---
+try:
+    from drishti_observability.config import ObsSettings
+    from drishti_observability.logging import configure as configure_logging
+    from drishti_observability import sentry
+    _obs = ObsSettings.load()
+    configure_logging("vtoe-worker", level=_obs.log_level, json_logs=_obs.log_json, version=_obs.service_version)
+    sentry.init("vtoe-worker", _obs)
+except ImportError:
+    logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger("vtoe-worker")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

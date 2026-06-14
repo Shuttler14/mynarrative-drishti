@@ -8,3 +8,7 @@ python-multipart==0.0.9
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 redis[hiredis]==5.0.8
+# observability
+structlog>=24.1
+sentry-sdk[fastapi]>=2.5
+prometheus-client>=0.20

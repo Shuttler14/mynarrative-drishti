@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import logging
 
 from fastapi import FastAPI, HTTPException
 
@@ -9,8 +10,22 @@ from vtoe.pipeline.engine import TryOnEngine
 from vtoe.utils.imaging import decode_image, encode_image
 from vtoe.utils.memory import vram_gb
 
+logger = logging.getLogger("vtoe")
+
 app = FastAPI(title="MyNarrative VTON", version="1.0.0")
 engine = TryOnEngine()
+
+# --- Observability: structured logging + Sentry + request-id + Prometheus ---
+try:
+    from drishti_observability import setup as setup_obs
+    from drishti_observability.config import ObsSettings
+    setup_obs(app, "vtoe-api", ObsSettings(
+        env="local",
+        sentry_dsn="",
+        service_version="1.0.0",
+    ))
+except ImportError:
+    pass
 
 _gpu_lock = asyncio.Lock()
 _queue_depth = 0
@@ -31,6 +46,7 @@ async def try_on(req: TryOnRequest) -> TryOnResponse:
                 quality=req.quality, preserve_face=req.preserve_face,
                 steps=req.num_inference_steps, guidance=req.guidance_scale, seed=req.seed)
     except Exception as e:
+        logger.error("tryon.failed", error=str(e), exc_info=True)
         raise HTTPException(500, detail={"code": "TRYON_FAILED", "message": str(e)})
     finally:
         _queue_depth -= 1

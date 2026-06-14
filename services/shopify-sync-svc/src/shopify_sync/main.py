@@ -44,6 +44,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DRISHTI Shopify Sync", version="0.1.0", lifespan=lifespan)
+
+# --- Observability: structured logging + Sentry + request-id + Prometheus ---
+try:
+    from drishti_observability import setup as setup_obs
+    from drishti_observability.config import ObsSettings
+    setup_obs(app, "shopify-sync", ObsSettings(
+        env="local",
+        sentry_dsn="",
+        service_version="0.1.0",
+    ))
+except ImportError:
+    pass
+
 app.include_router(health.router)
 app.include_router(webhooks.router)
 app.include_router(admin.router)

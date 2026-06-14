@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 import logging
 from contextlib import asynccontextmanager
 
@@ -42,9 +41,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Observability: structured logging + Sentry + request-id + Prometheus ---
+try:
+    from drishti_observability import setup as setup_obs
+    from drishti_observability.config import ObsSettings
+    setup_obs(app, "drishti-api", ObsSettings(
+        env=settings.ENV,
+        sentry_dsn="",  # set via SENTRY_DSN env var
+        service_version=settings.APP_VERSION,
+    ))
+except ImportError:
+    pass  # drishti-observability not installed — run without observability
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
+    import time
     start = time.time()
     response = await call_next(request)
     response.headers["X-Process-Time"] = f"{time.time() - start:.4f}"

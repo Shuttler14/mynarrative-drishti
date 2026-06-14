@@ -15,3 +15,7 @@ httpx
 cloudflared
 Pillow
 numpy
+# observability
+structlog>=24.1
+sentry-sdk[fastapi]>=2.5
+prometheus-client>=0.20
