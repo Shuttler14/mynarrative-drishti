@@ -15,12 +15,18 @@ from api.config import get_settings
 
 settings = get_settings()
 
-# Strip sslmode from URL (asyncpg doesn't accept it as a URL param)
+# Strip sslmode + ensure asyncpg scheme
 _db_url = settings.DATABASE_URL
 parsed = urlparse(_db_url)
 qs = parse_qs(parsed.query)
 _needs_ssl = qs.pop("sslmode", None)
 _db_url = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
+
+# Normalize scheme: postgres:// or postgresql:// → postgresql+asyncpg://
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif _db_url.startswith("postgresql://") and "asyncpg" not in _db_url:
+    _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 _connect_args: dict = {}
 if _needs_ssl:
