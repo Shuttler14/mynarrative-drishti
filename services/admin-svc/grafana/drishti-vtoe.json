@@ -1,0 +1,65 @@
+{
+  "title": "DRISHTI \u00b7 Virtual Try-On",
+  "uid": "drishti-vtoe",
+  "tags": ["drishti", "vtoe", "gpu"],
+  "panels": [
+    {
+      "title": "Try-on p50 / p95 (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(vtoe_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(vtoe_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "title": "Jobs by result",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(vtoe_jobs_total[5m])) by (result)",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "title": "Queue depth by priority",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "vtoe_stream_depth",
+          "legendFormat": "{{priority}}"
+        }
+      ]
+    },
+    {
+      "title": "Model usage (24h)",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(increase(vtoe_jobs_total[24h])) by (model)",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    },
+    {
+      "title": "GPU stage latency",
+      "type": "heatmap",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(vtoe_stage_ms_bucket[5m])) by (le, stage)"
+        }
+      ]
+    }
+  ]
+}

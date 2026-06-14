@@ -1,0 +1,59 @@
+{
+  "title": "DRISHTI \u00b7 Overview",
+  "uid": "drishti-overview",
+  "tags": ["drishti", "overview"],
+  "panels": [
+    {
+      "title": "5xx error rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))"
+        }
+      ]
+    },
+    {
+      "title": "HTTP p95 by service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "title": "Reco cache hit rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(reco_requests_total{result=\"cache_hit\"}[1h])) / sum(rate(reco_requests_total[1h]))"
+        }
+      ]
+    },
+    {
+      "title": "Products synced",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "shopify_products_synced_total"
+        }
+      ]
+    },
+    {
+      "title": "Scraper blocks",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(scraper_blocked_total[5m])) by (marketplace)",
+          "legendFormat": "{{marketplace}}"
+        }
+      ]
+    }
+  ]
+}

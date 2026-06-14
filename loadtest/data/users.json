@@ -1,0 +1,7 @@
+[
+  {"phone": "+910000000001", "user_id": "loadtest-001"},
+  {"phone": "+910000000002", "user_id": "loadtest-002"},
+  {"phone": "+910000000003", "user_id": "loadtest-003"},
+  {"phone": "+910000000004", "user_id": "loadtest-004"},
+  {"phone": "+910000000005", "user_id": "loadtest-005"}
+]

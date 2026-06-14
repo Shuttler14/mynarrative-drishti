@@ -1,0 +1,15 @@
+name: Load Test (staging)
+on:
+  workflow_dispatch:
+  schedule: [{ cron: "0 20 * * 0" }]   # weekly, off-peak
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grafana/setup-k6-action@v1
+      - run: k6 run loadtest/scenarios/mixed_smoke.js
+        env:
+          BASE_URL: ${{ vars.STAGING_API_URL }}
+          TEST_KEY: ${{ secrets.STAGING_TEST_KEY }}
+          TEST_OTP: ${{ secrets.STAGING_TEST_OTP }}
