@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
@@ -99,7 +99,7 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
 
     record.is_used = True
 
-    user_stmt = select(User).where(User.phone == req.contact) | select(User).where(User.email == req.contact)
+    user_stmt = select(User).where(or_(User.phone == req.contact, User.email == req.contact))
     user_result = await db.execute(user_stmt)
     user = user_result.scalar_one_or_none()
 
