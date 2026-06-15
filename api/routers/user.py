@@ -104,7 +104,8 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
     user = user_result.scalar_one_or_none()
 
     if not user:
-        user = User(phone=req.contact if req.phone else None, email=req.contact if req.email else None)
+        is_phone = req.contact.startswith("+") or req.contact.isdigit()
+        user = User(phone=req.contact if is_phone else None, email=req.contact if not is_phone else None)
         db.add(user)
         await db.flush()
 
