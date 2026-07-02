@@ -9,6 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download rembg IS-Net model (179MB) to avoid cold start delay
+RUN python -c "from rembg import new_session; new_session('isnet-general-use')"
+
+# Install drishti-observability from local package
+COPY libs/py-observability /tmp/py-observability
+RUN pip install --no-cache-dir /tmp/py-observability && rm -rf /tmp/py-observability
+
 COPY . .
 
 EXPOSE 8000
