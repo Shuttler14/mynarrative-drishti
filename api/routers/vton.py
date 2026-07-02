@@ -63,10 +63,14 @@ class VTONJobResponse(BaseModel):
 
 # ── Garment Extraction Endpoint ──
 
+class ExtractGarmentRequest(BaseModel):
+    image_url: str
+    upload: bool = True
+
+
 @router.post("/extract-garment")
 async def extract_garment_endpoint(
-    image_url: str = Query(..., description="Marketplace product image URL"),
-    upload: bool = Query(True, description="Upload extracted garment to R2"),
+    req: ExtractGarmentRequest,
 ):
     """
     Extract a clean flat-lay garment image from a marketplace product photo.
@@ -74,7 +78,7 @@ async def extract_garment_endpoint(
     """
     from api.services.garment_extract import extract_garment
 
-    result = await extract_garment(image_url, upload=upload)
+    result = await extract_garment(req.image_url, upload=req.upload)
 
     if "error" in result:
         raise HTTPException(500, result["error"])

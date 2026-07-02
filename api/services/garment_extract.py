@@ -38,13 +38,13 @@ _remgb_lock = asyncio.Lock()
 
 
 def _get_remgb_session():
-    """Get or create rembg session with IS-Net model (best quality)."""
+    """Get or create rembg session with silueta model (fast, good for product photos)."""
     global _remgb_session
     if _remgb_session is None:
         from rembg import new_session
-        # isnet-general-use: best general-purpose model, handles clothing well
-        _remgb_session = new_session("isnet-general-use")
-        logger.info("rembg session created with isnet-general-use model")
+        # silueta: small (14MB), fast on CPU, good edge quality for product photos
+        _remgb_session = new_session("silueta")
+        logger.info("rembg session created with silueta model")
     return _remgb_session
 
 

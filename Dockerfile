@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download rembg IS-Net model (179MB) to avoid cold start delay
-RUN python -c "from rembg import new_session; new_session('isnet-general-use')"
+# Pre-download rembg silueta model (14MB) to avoid cold start delay
+RUN python -c "from rembg import new_session; new_session('silueta')"
 
 # Install drishti-observability from local package
 COPY libs/py-observability /tmp/py-observability
