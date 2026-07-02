@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+import os
+import uuid
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,23 +46,11 @@ class WidgetTryOnRequest(BaseModel):
     garment_image: str  # base64 data URI or URL
 
 
-def _widget_to_engine(req: WidgetTryOnRequest) -> dict:
-    """Translate widget payload to VTOE engine format."""
-    garment_type, ethnic_sub_type = _MODE_MAP.get(req.mode, ("top", None))
-    return {
-        "person_image": req.user_image,
-        "garment_image": req.garment_image,
-        "garment_type": garment_type,
-        "ethnic_sub_type": ethnic_sub_type,
-        "preserve_face": True,
-        "quality": "balanced",
-    }
-
-
 class VTONRequest(BaseModel):
     garment_image_url: str
     person_image_url: str | None = None
     vto_engine: str = "idm-vton"
+    extract_garment: bool = True  # Run garment extraction preprocessing
 
 
 class VTONJobResponse(BaseModel):
@@ -70,11 +61,94 @@ class VTONJobResponse(BaseModel):
     error_message: str | None = None
 
 
+# ── Garment Extraction Endpoint ──
+
+@router.post("/extract-garment")
+async def extract_garment_endpoint(
+    image_url: str = Query(..., description="Marketplace product image URL"),
+    upload: bool = Query(True, description="Upload extracted garment to R2"),
+):
+    """
+    Extract a clean flat-lay garment image from a marketplace product photo.
+    Uses rembg (IS-Net) background removal + connected component isolation.
+    """
+    from api.services.garment_extract import extract_garment
+
+    result = await extract_garment(image_url, upload=upload)
+
+    if "error" in result:
+        raise HTTPException(500, result["error"])
+
+    return {
+        "original_url": result["original_url"],
+        "garment_image": result["garment_image"],
+        "processing_time_ms": result["processing_time_ms"],
+        "original_size": result["original_size"],
+        "garment_size": result["garment_size"],
+    }
+
+
+@router.post("/extract-garment-upload")
+async def extract_garment_upload(
+    file: UploadFile = File(...),
+):
+    """Extract garment from an uploaded image file."""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "File must be an image")
+
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 10MB)")
+
+    from api.services.garment_extract import extract_garment_from_bytes
+
+    ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "png"
+    output_key = f"garments/upload-{uuid.uuid4().hex}.{ext}"
+
+    result = await extract_garment_from_bytes(contents, upload=True, output_key=output_key)
+
+    return {
+        "garment_image": result["garment_image"],
+        "processing_time_ms": result["processing_time_ms"],
+        "original_size": result["original_size"],
+        "garment_size": result["garment_size"],
+    }
+
+
+# ── Helper: preprocess garment image for VTON ──
+
+async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -> str:
+    """Optionally run garment extraction on marketplace images before VTON."""
+    if not should_extract:
+        return garment_url
+
+    # Skip extraction if already a data URI or R2 garment URL
+    if garment_url.startswith("data:"):
+        return garment_url
+    if "/garments/" in garment_url:
+        return garment_url
+
+    # Check if it looks like a marketplace URL (not already a clean garment)
+    marketplace_domains = ["myntra.com", "ajio.com", "amazon.in", "amazon.com", "flipkart.com"]
+    is_marketplace = any(d in garment_url for d in marketplace_domains)
+
+    if is_marketplace:
+        logger.info(f"Extracting garment from marketplace URL: {garment_url[:80]}")
+        from api.services.garment_extract import extract_garment
+        result = await extract_garment(garment_url, upload=True)
+        if "error" not in result:
+            return result["garment_image"]
+        logger.warning(f"Garment extraction failed, using original: {result.get('error')}")
+
+    return garment_url
+
+
+# ── VTON Endpoints ──
+
 @router.post("/try-on")
 async def create_vton_job(
     req: VTONRequest,
     authorization: str = Header(None),
-    db: AsyncSession = Depends(get_db),
 ):
     user_id = None
     if authorization:
@@ -82,40 +156,27 @@ async def create_vton_job(
         if payload:
             user_id = payload["sub"]
 
-    job = VTONJob(
-        user_id=user_id,
-        garment_image=req.garment_image_url,
-        person_url=req.person_image_url,
-        status="queued",
-        vto_engine=req.vto_engine,
+    # Preprocess garment image (extract from marketplace if needed)
+    garment_url = await _preprocess_garment_for_vton(
+        req.garment_image_url, req.extract_garment
     )
-    db.add(job)
-    await db.flush()
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{settings.VTOE_GPU_URL}/v1/try-on",
-                json={
-                    "job_id": str(job.id),
-                    "garment_image": req.garment_image_url,
-                    "person_image": req.person_image_url,
-                    "engine": req.vto_engine,
-                },
-            )
-            if resp.status_code == 200:
-                job.status = "processing"
-            else:
-                job.status = "queued"
-                logger.warning(f"GPU worker returned {resp.status_code}, queued for retry")
-    except Exception as e:
-        job.status = "queued"
-        logger.warning(f"GPU worker unavailable: {e}, queued for retry")
+    from api.services.vton_replicate import create_try_on_job
+
+    result = await create_try_on_job(
+        person_image_url=req.person_image_url,
+        garment_image_url=garment_url,
+        garment_type="top",
+    )
 
     return {
-        "job_id": str(job.id),
-        "status": job.status,
-        "message": "VTON job created",
+        "status": result.get("status", "error"),
+        "result_image": result.get("result_image"),
+        "processing_time_ms": result.get("processing_time_ms"),
+        "quality_score": result.get("quality_score"),
+        "engine": result.get("engine", "idm-vton"),
+        "garment_extracted": garment_url != req.garment_image_url,
+        "message": result.get("detail", "VTON completed"),
     }
 
 
@@ -123,58 +184,34 @@ async def create_vton_job(
 async def widget_try_on(
     req: WidgetTryOnRequest,
     authorization: str = Header(None),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Shopify widget endpoint — normalizes payload format before forwarding to GPU."""
+    """Shopify widget endpoint — normalizes payload format before forwarding to Replicate."""
     user_id = None
     if authorization:
         payload = verify_token(authorization.replace("Bearer ", ""))
         if payload:
             user_id = payload["sub"]
 
-    engine_payload = _widget_to_engine(req)
+    # Preprocess garment image (extract from marketplace if needed)
+    garment_url = await _preprocess_garment_for_vton(req.garment_image, should_extract=True)
 
-    job = VTONJob(
-        user_id=user_id,
-        garment_image=req.garment_image[:200] if len(req.garment_image) > 200 else req.garment_image,
-        person_url=req.user_image[:200] if len(req.user_image) > 200 else req.user_image,
-        status="queued",
-        vto_engine="idm-vton",
+    engine_payload = _MODE_MAP.get(req.mode, ("top", None))
+
+    from api.services.vton_replicate import create_try_on_job
+
+    result = await create_try_on_job(
+        person_image_url=req.user_image,
+        garment_image_url=garment_url,
+        garment_type=engine_payload[0],
     )
-    db.add(job)
-    await db.flush()
-
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{settings.VTOE_GPU_URL}/v1/try-on",
-                json={**engine_payload, "job_id": str(job.id)},
-            )
-            if resp.status_code == 200:
-                result = resp.json()
-                job.status = "completed"
-                job.result_image = result.get("result_image")
-                job.processing_time_ms = result.get("processing_time_ms")
-                job.quality_score = result.get("quality_score")
-                return {
-                    "status": "completed",
-                    "result_image": result.get("result_image"),
-                    "processing_time_ms": result.get("processing_time_ms"),
-                    "quality_score": result.get("quality_score"),
-                    "face_similarity": result.get("face_similarity"),
-                    "garment_similarity": result.get("garment_similarity"),
-                }
-            else:
-                job.status = "queued"
-                logger.warning(f"GPU worker returned {resp.status_code}")
-    except Exception as e:
-        job.status = "queued"
-        logger.warning(f"GPU worker unavailable: {e}")
 
     return {
-        "status": job.status,
-        "job_id": str(job.id),
-        "message": "Processing",
+        "status": result.get("status", "error"),
+        "result_image": result.get("result_image"),
+        "processing_time_ms": result.get("processing_time_ms"),
+        "quality_score": result.get("quality_score"),
+        "engine": result.get("engine", "idm-vton"),
+        "garment_extracted": garment_url != req.garment_image,
     }
 
 
@@ -205,12 +242,63 @@ async def upload_person_image(
     if len(contents) > 10 * 1024 * 1024:
         raise HTTPException(400, "File too large (max 10MB)")
 
-    return {
-        "message": "Upload received",
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "size": len(contents),
-    }
+    # Extract user_id from token if provided
+    user_id = None
+    if authorization:
+        payload = verify_token(authorization.replace("Bearer ", ""))
+        if payload:
+            user_id = payload["sub"]
+
+    # Generate unique filename
+    ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
+    filename = f"person-images/{user_id or 'anonymous'}-{uuid.uuid4().hex}.{ext}"
+
+    # Upload to Cloudflare R2 (S3-compatible)
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+
+        account_id = os.getenv("R2_ACCOUNT_ID", "")
+        endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com" if account_id else None
+
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=os.getenv("R2_ACCESS_KEY_ID", "") or os.getenv("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", "") or os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+            region_name="auto",
+            endpoint_url=endpoint_url,
+        )
+
+        bucket = os.getenv("R2_BUCKET", "") or os.getenv("S3_BUCKET", "drishti")
+
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=filename,
+            Body=contents,
+            ContentType=file.content_type,
+        )
+
+        # Generate presigned URL
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": filename},
+            ExpiresIn=3600,
+        )
+
+        return {
+            "message": "Upload successful",
+            "filename": filename,
+            "url": presigned_url,
+            "content_type": file.content_type,
+            "size": len(contents),
+        }
+
+    except ClientError as e:
+        logger.error(f"R2 upload failed: {e}")
+        raise HTTPException(500, "Failed to upload image to storage")
+    except Exception as e:
+        logger.error(f"Upload error: {e}")
+        raise HTTPException(500, "Upload failed")
 
 
 @router.get("/engines")
@@ -243,6 +331,42 @@ async def list_vton_engines():
             },
         ],
         "default": "idm-vton",
+    }
+
+
+class BatchVTONRequest(BaseModel):
+    person_image_url: str
+    garment_image_urls: list[str]
+    session_id: str | None = None
+
+
+@router.post("/batch-try-on")
+async def batch_try_on(
+    req: BatchVTONRequest,
+    authorization: str = Header(None),
+):
+    """Batch VTON — try on multiple garments against one person image.
+    Each garment URL is preprocessed with extraction if it's a marketplace URL."""
+    user_id = None
+    if authorization:
+        payload = verify_token(authorization.replace("Bearer ", ""))
+        if payload:
+            user_id = payload["sub"]
+
+    from api.services.vton_replicate import create_try_on_job
+
+    async def _run_vton(garment_url):
+        clean_url = await _preprocess_garment_for_vton(garment_url, should_extract=True)
+        return await create_try_on_job(
+            person_image_url=req.person_image_url,
+            garment_image_url=clean_url,
+        )
+
+    results = await asyncio.gather(*[_run_vton(url) for url in req.garment_image_urls[:6]])
+
+    return {
+        "results": results,
+        "count": len(results),
     }
 
 
