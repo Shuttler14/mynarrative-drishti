@@ -133,7 +133,7 @@ async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -
         return garment_url
 
     # Check if it looks like a marketplace URL (not already a clean garment)
-    marketplace_domains = ["myntra.com", "ajio.com", "amazon.in", "amazon.com", "flipkart.com"]
+    marketplace_domains = ["myntra.com", "myntassets.com", "ajio.com", "jioimages.com", "amazon.in", "amazon.com", "flipkart.com", "meesho.com"]
     is_marketplace = any(d in garment_url for d in marketplace_domains)
 
     if is_marketplace:
