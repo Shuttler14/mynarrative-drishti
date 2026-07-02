@@ -3,150 +3,92 @@ Garment extraction pipeline — extracts clean flat-lay garment images from mark
 
 Pipeline:
   1. Download image from URL
-  2. Background removal via rembg (IS-Net model, best quality for CPU)
-  3. Garment isolation — largest connected component, exclude model/mannequin
-  4. Crop to bounding box + padding
-  5. Optional: upload to R2 for persistent storage
-  6. Return clean garment PNG
+  2. Background removal via Replicate's rembg model (runs on their servers, fast)
+  3. Garment isolation — connected component cleanup + crop
+  4. Optional: upload to R2 for persistent storage
+  5. Return clean garment PNG
 
 Models used:
-  - rembg with isnet-general-use (best free CPU model, MIT license)
-  - PIL/Pillow for connected component analysis and morphological ops
+  - cjwbw/rembg on Replicate (free tier, fast GPU inference)
+  - PIL/Pillow for post-processing
 """
 from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import os
-import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import httpx
-from PIL import Image, ImageFilter
+from PIL import Image
 
 logger = logging.getLogger("drishti.garment")
 
-# ── Thread pool for CPU-bound rembg work ──
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="garment")
-
-# ── Lazy-loaded rembg session (model loaded once) ──
-_remgb_session = None
-_remgb_lock = asyncio.Lock()
+REPLICATE_API = "https://api.replicate.com/v1"
+REPLICATE_REMBG_MODEL = "cjwbw/rembg:7d169b277d85e2dd060c3a2ddf07ea447713e77c097e8cf8d4dd6c67e3e64c73"
 
 
-def _get_remgb_session():
-    """Get or create rembg session with silueta model (fast, good for product photos)."""
-    global _remgb_session
-    if _remgb_session is None:
-        from rembg import new_session
-        # silueta: small (14MB), fast on CPU, good edge quality for product photos
-        _remgb_session = new_session("silueta")
-        logger.info("rembg session created with silueta model")
-    return _remgb_session
+def _get_token() -> str:
+    return os.getenv("REPLICATE_API_TOKEN", "")
 
 
-def _remove_background_sync(image_bytes: bytes) -> bytes:
-    """Synchronous background removal via rembg. Runs in thread pool."""
-    from rembg import remove
+async def _replicate_remove_bg(image_url: str) -> Optional[str]:
+    """Use Replicate's rembg model to remove background. Returns output URL."""
+    token = _get_token()
+    if not token:
+        logger.error("REPLICATE_API_TOKEN not set")
+        return None
 
-    session = _get_remgb_session()
-    input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
 
-    # Remove background — alpha_matting for better edge quality on clothing
-    output_image = remove(
-        input_image,
-        session=session,
-        alpha_matting=True,
-        alpha_matting_foreground_threshold=240,
-        alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=10,
-    )
+    payload = {
+        "version": REPLICATE_REMBG_MODEL.split(":")[-1],
+        "input": {
+            "image": image_url,
+        },
+    }
 
-    buf = io.BytesIO()
-    output_image.save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{REPLICATE_API}/predictions", headers=headers, json=payload)
+            if resp.status_code != 201:
+                logger.error(f"Replicate rembg create failed: {resp.status_code} {resp.text[:200]}")
+                return None
+            pred = resp.json()
+            pred_id = pred["id"]
 
+        # Poll until done (max 60s)
+        for _ in range(30):
+            await asyncio.sleep(2)
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(f"{REPLICATE_API}/predictions/{pred_id}", headers=headers)
+                if resp.status_code != 200:
+                    continue
+                d = json.loads(resp.text, strict=False)
+                status = d.get("status")
+                if status == "succeeded":
+                    output = d.get("output", "")
+                    if isinstance(output, list) and output:
+                        return output[0]
+                    elif isinstance(output, str) and output:
+                        return output
+                    return None
+                elif status in ("failed", "canceled"):
+                    logger.error(f"Replicate rembg failed: {d.get('error')}")
+                    return None
 
-def _isolate_garment_sync(image_bytes: bytes) -> bytes:
-    """
-    Isolate garment from person/mannequin after background removal.
-    
-    Strategy:
-      1. rembg already removed the background → transparent pixels
-      2. The remaining foreground is person + garment
-      3. We crop to the foreground bounding box with smart padding
-      4. We apply morphological cleaning to remove small noise
-    """
-    import numpy as np
-    from scipy import ndimage
+        logger.error("Replicate rembg timed out")
+        return None
 
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-
-    # Get alpha channel as mask
-    alpha = img.split()[3]
-    mask_np = np.array(alpha, dtype=np.uint8)
-
-    # Threshold to binary
-    binary = (mask_np > 128).astype(np.uint8)
-
-    # Label connected components
-    labeled, num_features = ndimage.label(binary)
-
-    if num_features == 0:
-        return image_bytes
-
-    # Get component sizes
-    component_sizes = ndimage.sum(binary, labeled, range(1, num_features + 1))
-
-    # Keep components that are >5% of the largest (handles garment pieces)
-    largest_size = max(component_sizes)
-    threshold = largest_size * 0.05
-
-    # Create clean mask with significant components only
-    clean_mask = np.zeros_like(binary)
-    for i, size in enumerate(component_sizes):
-        if size >= threshold:
-            clean_mask |= (labeled == (i + 1)).astype(np.uint8)
-
-    # Morphological operations to clean edges
-    # Close small gaps in the garment
-    clean_mask = ndimage.binary_closing(clean_mask, iterations=3).astype(np.uint8)
-    # Remove small isolated noise
-    clean_mask = ndimage.binary_opening(clean_mask, iterations=2).astype(np.uint8)
-
-    # Apply clean mask to original image
-    result = img.copy()
-    clean_alpha = Image.fromarray((clean_mask * 255).astype(np.uint8), mode="L")
-    result.putalpha(clean_alpha)
-
-    # Crop to bounding box with smart padding
-    bbox = result.getbbox()
-    if bbox:
-        x1, y1, x2, y2 = bbox
-        w, h = x2 - x1, y2 - y1
-
-        # Add padding proportional to image size (5-10%)
-        pad_x = max(10, int(w * 0.08))
-        pad_y = max(10, int(h * 0.08))
-
-        x1 = max(0, x1 - pad_x)
-        y1 = max(0, y1 - pad_y)
-        x2 = min(img.width, x2 + pad_x)
-        y2 = min(img.height, y2 + pad_y)
-        result = result.crop((x1, y1, x2, y2))
-
-    # Convert to RGB with white background (better for VTON models)
-    # VTON models typically expect garment on white/plain background
-    bg = Image.new("RGBA", result.size, (255, 255, 255, 255))
-    bg.paste(result, mask=result.split()[3])
-    result = bg.convert("RGB")
-
-    buf = io.BytesIO()
-    result.save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
+    except Exception as e:
+        logger.error(f"Replicate rembg error: {e}")
+        return None
 
 
 async def download_image(url: str) -> bytes:
@@ -159,8 +101,56 @@ async def download_image(url: str) -> bytes:
         return resp.content
 
 
+def _post_process_garment(image_bytes: bytes) -> bytes:
+    """Post-process: crop to bounding box, clean edges, white background."""
+    import numpy as np
+    from scipy import ndimage
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+
+    # Get alpha channel
+    alpha = np.array(img.split()[3], dtype=np.uint8)
+
+    # Threshold
+    binary = (alpha > 128).astype(np.uint8)
+
+    if binary.sum() == 0:
+        return image_bytes
+
+    # Clean up with morphological operations
+    binary = ndimage.binary_closing(binary, iterations=2).astype(np.uint8)
+    binary = ndimage.binary_opening(binary, iterations=1).astype(np.uint8)
+
+    # Apply clean mask
+    result = img.copy()
+    clean_alpha = Image.fromarray((binary * 255).astype(np.uint8), mode="L")
+    result.putalpha(clean_alpha)
+
+    # Crop to bounding box with padding
+    bbox = result.getbbox()
+    if bbox:
+        x1, y1, x2, y2 = bbox
+        w, h = x2 - x1, y2 - y1
+        pad_x = max(5, int(w * 0.05))
+        pad_y = max(5, int(h * 0.05))
+        x1 = max(0, x1 - pad_x)
+        y1 = max(0, y1 - pad_y)
+        x2 = min(img.width, x2 + pad_x)
+        y2 = min(img.height, y2 + pad_y)
+        result = result.crop((x1, y1, x2, y2))
+
+    # Convert to RGB with white background (VTON-optimized)
+    bg = Image.new("RGBA", result.size, (255, 255, 255, 255))
+    bg.paste(result, mask=result.split()[3])
+    result = bg.convert("RGB")
+
+    buf = io.BytesIO()
+    result.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 async def upload_to_r2(image_bytes: bytes, key: str) -> Optional[str]:
-    """Upload garment image to Cloudflare R2 for persistent storage."""
+    """Upload garment image to Cloudflare R2."""
     try:
         import boto3
         from botocore.config import Config
@@ -181,12 +171,8 @@ async def upload_to_r2(image_bytes: bytes, key: str) -> Optional[str]:
             ContentType="image/png",
             CacheControl="public, max-age=31536000",
         )
-
-        # Return public URL (if bucket has public access) or signed URL
-        account_id = os.getenv("R2_ACCOUNT_ID")
-        url = f"https://{account_id}.r2.cloudflarestorage.com/{bucket}/{key}"
         logger.info(f"Uploaded garment to R2: {key}")
-        return url
+        return f"https://{os.getenv('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com/{bucket}/{key}"
     except Exception as e:
         logger.warning(f"R2 upload failed: {e}")
         return None
@@ -200,43 +186,32 @@ async def extract_garment(
     """
     Full garment extraction pipeline.
 
-    Args:
-        image_url: URL of marketplace product image
-        upload: Whether to upload result to R2
-        output_key: R2 key for upload (auto-generated if None)
-
     Returns:
-        dict with:
-          - original_url: input URL
-          - garment_image: URL of extracted garment (R2 or data URI)
-          - garment_bytes: raw PNG bytes (for immediate use)
-          - processing_time_ms: total processing time
-          - original_size: (width, height) of original
-          - garment_size: (width, height) of extracted garment
+        dict with original_url, garment_image URL, processing_time_ms, sizes
     """
     start = time.time()
 
-    # Step 1: Download
-    try:
-        original_bytes = await download_image(image_url)
-    except Exception as e:
-        logger.error(f"Failed to download image: {e}")
-        return {"error": f"Download failed: {e}", "garment_image": image_url}
+    # Step 1: Remove background via Replicate (fast, runs on their servers)
+    no_bg_url = await _replicate_remove_bg(image_url)
+    if not no_bg_url:
+        return {"error": "Background removal failed", "garment_image": image_url, "original_url": image_url}
 
-    original_img = Image.open(io.BytesIO(original_bytes))
+    # Step 2: Download the no-bg result
+    try:
+        no_bg_bytes = await download_image(no_bg_url)
+    except Exception as e:
+        logger.error(f"Failed to download no-bg result: {e}")
+        return {"error": f"Download failed: {e}", "garment_image": no_bg_url, "original_url": image_url}
+
+    original_img = Image.open(io.BytesIO(no_bg_bytes))
     original_size = original_img.size
 
-    # Step 2: Background removal (CPU-bound, run in thread pool)
-    loop = asyncio.get_event_loop()
-    no_bg_bytes = await loop.run_in_executor(_executor, _remove_background_sync, original_bytes)
-
-    # Step 3: Garment isolation (CPU-bound, run in thread pool)
-    garment_bytes = await loop.run_in_executor(_executor, _isolate_garment_sync, no_bg_bytes)
-
+    # Step 3: Post-process (crop, clean, white background)
+    garment_bytes = _post_process_garment(no_bg_bytes)
     garment_img = Image.open(io.BytesIO(garment_bytes))
     garment_size = garment_img.size
 
-    # Step 4: Upload to R2 (optional)
+    # Step 4: Upload to R2
     garment_url = None
     if upload:
         if not output_key:
@@ -245,7 +220,6 @@ async def extract_garment(
             output_key = f"garments/{url_hash}.png"
         garment_url = await upload_to_r2(garment_bytes, output_key)
 
-    # Fallback: data URI if R2 upload fails
     if not garment_url:
         import base64
         b64 = base64.b64encode(garment_bytes).decode()
@@ -275,9 +249,22 @@ async def extract_garment_from_bytes(
     original_img = Image.open(io.BytesIO(image_bytes))
     original_size = original_img.size
 
-    loop = asyncio.get_event_loop()
-    no_bg_bytes = await loop.run_in_executor(_executor, _remove_background_sync, image_bytes)
-    garment_bytes = await loop.run_in_executor(_executor, _isolate_garment_sync, no_bg_bytes)
+    # For uploaded bytes, we need to upload first to get a URL for Replicate
+    # Upload to R2 temporarily
+    import hashlib
+    temp_key = f"temp/{hashlib.md5(image_bytes).hexdigest()[:12]}.png"
+    temp_url = await upload_to_r2(image_bytes, temp_key)
+
+    if not temp_url:
+        return {"error": "Failed to upload image for processing", "garment_image": None}
+
+    # Use Replicate for background removal
+    no_bg_url = await _replicate_remove_bg(temp_url)
+    if not no_bg_url:
+        return {"error": "Background removal failed", "garment_image": None}
+
+    no_bg_bytes = await download_image(no_bg_url)
+    garment_bytes = _post_process_garment(no_bg_bytes)
 
     garment_img = Image.open(io.BytesIO(garment_bytes))
     garment_size = garment_img.size
@@ -318,8 +305,6 @@ async def _test():
         print(f"Original: {result['original_size']}")
         print(f"Garment: {result['garment_size']}")
         print(f"Time: {result['processing_time_ms']}ms")
-
-        # Save for inspection
         with open("/tmp/garment_extracted.png", "wb") as f:
             f.write(result["garment_bytes"])
         print("Saved to /tmp/garment_extracted.png")

@@ -9,9 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download rembg silueta model (14MB) to avoid cold start delay
-RUN python -c "from rembg import new_session; new_session('silueta')"
-
 # Install drishti-observability from local package
 COPY libs/py-observability /tmp/py-observability
 RUN pip install --no-cache-dir /tmp/py-observability && rm -rf /tmp/py-observability
