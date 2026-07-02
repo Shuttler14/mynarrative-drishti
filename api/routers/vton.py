@@ -139,8 +139,9 @@ async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -
     if is_marketplace:
         logger.info(f"Extracting garment from marketplace URL: {garment_url[:80]}")
         from api.services.garment_extract import extract_garment
-        result = await extract_garment(garment_url, upload=True)
+        result = await extract_garment(garment_url, upload=False)
         if "error" not in result:
+            # Use data URI for VTON (R2 URLs may not be publicly accessible)
             return result["garment_image"]
         logger.warning(f"Garment extraction failed, using original: {result.get('error')}")
 
