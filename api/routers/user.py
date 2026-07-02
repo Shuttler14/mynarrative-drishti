@@ -3,16 +3,21 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import get_settings
 from api.database import get_db
 from api.models.schema import User, OTPRecord
 from api.utils.auth import create_token, verify_token
+
+logger = logging.getLogger("drishti.user")
+settings = get_settings()
 
 router = APIRouter()
 
@@ -48,6 +53,46 @@ class UserResponse(BaseModel):
     wallet_balance: int = 0
 
 
+async def _send_otp_email(email: str, otp: str) -> bool:
+    """Send OTP via email using SMTP."""
+    import aiosmtplib
+    from email.mime.text import MIMEText
+
+    if not settings.SMTP_HOST:
+        logger.warning("SMTP not configured, OTP email not sent")
+        return False
+
+    msg = MIMEText(
+        f"Your Drishti verification code is: {otp}\n\nThis code expires in 10 minutes.\n\nIf you didn't request this, ignore this email.",
+        "plain",
+    )
+    msg["From"] = settings.SMTP_USER
+    msg["To"] = email
+    msg["Subject"] = "Your Drishti Verification Code"
+
+    try:
+        await aiosmtplib.send(
+            msg,
+            hostname=settings.SMTP_HOST,
+            port=settings.SMTP_PORT,
+            username=settings.SMTP_USER,
+            password=settings.SMTP_PASS,
+            use_tls=True,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send OTP email: {e}")
+        return False
+
+
+async def _send_otp_sms(phone: str, otp: str) -> bool:
+    """Send OTP via SMS. Integrate with Twilio/MSG91 in production."""
+    # TODO: Integrate with SMS provider (Twilio, MSG91, etc.)
+    # For now, log the OTP for development
+    logger.info(f"OTP for {phone}: {otp} (SMS provider not configured)")
+    return True
+
+
 @router.post("/send-otp")
 async def send_otp(req: SendOTPRequest, db: AsyncSession = Depends(get_db)):
     contact = req.phone or req.email
@@ -61,10 +106,20 @@ async def send_otp(req: SendOTPRequest, db: AsyncSession = Depends(get_db)):
         contact=contact,
         otp_hash=otp_hash,
         purpose="login",
-        expires_at=datetime.utcnow() + timedelta(minutes=10),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
     )
     db.add(record)
     await db.flush()
+
+    # Actually send the OTP
+    is_phone = contact.startswith("+") or contact.isdigit()
+    if is_phone:
+        sent = await _send_otp_sms(contact, otp)
+    else:
+        sent = await _send_otp_email(contact, otp)
+
+    if not sent:
+        logger.warning(f"OTP delivery failed for {contact}, but record stored")
 
     return {"message": "OTP sent"}
 
@@ -85,7 +140,7 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
     if not record:
         raise HTTPException(400, "No OTP found")
 
-    if record.expires_at < datetime.utcnow():
+    if record.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise HTTPException(400, "OTP expired")
 
     if record.attempts >= 5:
@@ -109,7 +164,7 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
         db.add(user)
         await db.flush()
 
-    token = create_token({"sub": str(user.id), "role": user.role or "user", "exp": datetime.utcnow() + timedelta(days=7)})
+    token = create_token({"sub": str(user.id), "role": user.role or "user", "exp": datetime.now(timezone.utc) + timedelta(days=7)})
 
     return {
         "token": token,

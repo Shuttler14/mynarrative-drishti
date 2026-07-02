@@ -25,6 +25,13 @@ class RecommendRequest(BaseModel):
     body_profile: dict = {}
     exclude_ids: list[str] = []
     count: int = 6
+    # v4.0 additions
+    gender: str | None = None
+    brands: list[str] = []
+    price_segment: str | None = None  # budget | mid | premium | luxury
+    weather: dict | None = None
+    city: str | None = None
+    person_image_url: str | None = None
 
 
 class ProductRecommendation(BaseModel):
@@ -86,9 +93,28 @@ async def recommend_outfits(
     occasion = req.occasion or ""
     budget = req.budget_max or 5000
 
-    query_text = f"{style} clothing"
+    # v4.0: Apply price segment budget mapping
+    PRICE_RANGES = {
+        "budget": (0, 1500),
+        "mid": (1500, 5000),
+        "premium": (5000, 15000),
+        "luxury": (15000, 999999),
+    }
+    if req.price_segment and req.price_segment in PRICE_RANGES:
+        lo, hi = PRICE_RANGES[req.price_segment]
+        budget = min(budget, hi) if budget else hi
+
+    # v4.0: Gender-aware query
+    gender_label = ""
+    if req.gender:
+        gender_label = " for women" if req.gender == "female" else " for men"
+
+    query_text = f"{style} clothing{gender_label}"
     if occasion:
         query_text += f" for {occasion}"
+
+    # v4.0: Brand filter tags
+    brand_filter = [b.lower() for b in req.brands] if req.brands else []
 
     # Try vector search first
     client = _get_qdrant()
@@ -100,23 +126,35 @@ async def recommend_outfits(
             if embedding:
                 results = search_similar(client, embedding, limit=req.count * 2)
 
-                # Filter by budget and format
+                # Filter by budget, brand, and format
                 recommendations = []
                 for r in results:
-                    if r.get("price", 0) <= budget:
-                        recommendations.append(
-                            ProductRecommendation(
-                                product_id=r.get("shopify_id", ""),
-                                title=r.get("title", ""),
-                                category=r.get("category", ""),
-                                price=r.get("price", 0),
-                                currency=r.get("currency", "INR"),
-                                image_url=r.get("image_url", ""),
-                                url=r.get("url", ""),
-                                score=r.get("score", 0),
-                                reason=f"Matches your {style} style",
-                            ).model_dump()
-                        )
+                    price = r.get("price", 0)
+                    title_lower = (r.get("title", "") or "").lower()
+                    brand_vendor = (r.get("vendor", "") or "").lower()
+
+                    if price > budget:
+                        continue
+
+                    # v4.0: Brand filter — skip if brands selected and product doesn't match
+                    if brand_filter:
+                        matches_brand = any(b in title_lower or b in brand_vendor for b in brand_filter)
+                        if not matches_brand:
+                            continue
+
+                    recommendations.append(
+                        ProductRecommendation(
+                            product_id=r.get("shopify_id", ""),
+                            title=r.get("title", ""),
+                            category=r.get("category", ""),
+                            price=price,
+                            currency=r.get("currency", "INR"),
+                            image_url=r.get("image_url", ""),
+                            url=r.get("url", ""),
+                            score=r.get("score", 0),
+                            reason=f"Matches your {style} style" + (f" from {', '.join(req.brands)}" if req.brands else ""),
+                        ).model_dump()
+                    )
 
                     if len(recommendations) >= req.count:
                         break
@@ -166,24 +204,26 @@ async def trending_items(
     client = _get_qdrant()
     if client:
         try:
-            from qdrant_client.models import Filter, FieldCondition, MatchAnything
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-            # Get most recently synced products
-            results = client.query_points(
+            # Use scroll to list all products by recency (no vector search needed)
+            results = client.scroll(
                 collection_name="shopify_products",
-                query=[0] * 512,  # dummy vector, we just want to list
                 limit=limit,
-            )
+                with_payload=True,
+                with_vectors=False,
+            )[0]
 
             trending = []
-            for r in results.points:
+            for r in results:
+                payload = r.payload or {}
                 trending.append({
-                    "product_id": r.payload.get("shopify_id", ""),
-                    "title": r.payload.get("title", ""),
-                    "category": r.payload.get("category", ""),
-                    "price": r.payload.get("price", 0),
-                    "image_url": r.payload.get("image_url", ""),
-                    "url": r.payload.get("url", ""),
+                    "product_id": payload.get("shopify_id", ""),
+                    "title": payload.get("title", ""),
+                    "category": payload.get("category", ""),
+                    "price": payload.get("price", 0),
+                    "image_url": payload.get("image_url", ""),
+                    "url": payload.get("url", ""),
                 })
 
             if trending:

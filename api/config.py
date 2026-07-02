@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "https://mynarrative.in",
         "https://www.mynarrative.in",
+        "https://mynarrative.store",
+        "https://www.mynarrative.store",
         "http://localhost:3000",
         "http://localhost:8080",
     ]
@@ -61,6 +63,10 @@ class Settings(BaseSettings):
             except json.JSONDecodeError:
                 values["CORS_ORIGINS"] = [o.strip() for o in raw.split(",") if o.strip()]
         return values
+
+    OPENWEATHERMAP_API_KEY: str = os.getenv("OPENWEATHERMAP_API_KEY", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
 
     SCRAPING_RATE_LIMIT: int = 2
     SCRAPING_PROXY_URL: str = os.getenv("SCRAPING_PROXY_URL", "")

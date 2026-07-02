@@ -5,11 +5,15 @@ import hmac
 import json
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from datetime import datetime
+from datetime import datetime, timezone
+
+from passlib.context import CryptContext
 
 from api.config import get_settings
 
 settings = get_settings()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def create_token(payload: dict) -> str:
@@ -42,8 +46,8 @@ def verify_token(token: str) -> dict | None:
         payload = json.loads(urlsafe_b64decode(payload_encoded))
 
         if "exp" in payload:
-            exp = datetime.fromisoformat(payload["exp"]) if isinstance(payload["exp"], str) else datetime.utcfromtimestamp(payload["exp"])
-            if exp < datetime.utcnow():
+            exp = datetime.fromisoformat(payload["exp"]) if isinstance(payload["exp"], str) else datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+            if exp < datetime.now(timezone.utc):
                 return None
 
         return payload
@@ -52,11 +56,11 @@ def verify_token(token: str) -> dict | None:
 
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    return pwd_context.hash(password)
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return hmac.compare_digest(hash_password(password), hashed)
+    return pwd_context.verify(password, hashed)
 
 
 def generate_otp() -> str:

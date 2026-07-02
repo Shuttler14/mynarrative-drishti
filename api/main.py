@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse
 
 from api.config import get_settings
 from api.database import engine
-from api.models.schema import Base
 
 settings = get_settings()
 logger = logging.getLogger("drishti")
@@ -18,8 +17,8 @@ logger = logging.getLogger("drishti")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # NOTE: Tables are created via Alembic migrations only (alembic upgrade head)
+    # Base.metadata.create_all removed to prevent auto-creating tables in production
     yield
     await engine.dispose()
     logger.info("Shutting down")
@@ -33,17 +32,28 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
 )
 
+# --- Rate limiting + logging (added FIRST — innermost) ---
+from api.middleware.rate_limit import RateLimitMiddleware, RequestLoggingMiddleware
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
+
+# --- CORS (MUST be last add_middleware — outermost wrapper) ---
+CORS_ALLOWED = [
+    "https://mynarrative.in",
+    "https://www.mynarrative.in",
+    "https://mynarrative.store",
+    "https://www.mynarrative.store",
+    "https://jjdk0v-0c.myshopify.com",
+    "http://localhost:3000",
+    "http://localhost:8080",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=CORS_ALLOWED,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# --- Rate limiting (CRITICAL: was never registered) ---
-from api.middleware.rate_limit import RateLimitMiddleware
-app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
 
 # --- Observability: structured logging + Sentry + request-id + Prometheus ---
 try:
@@ -58,15 +68,6 @@ except ImportError:
     pass  # drishti-observability not installed — run without observability
 
 
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    import time
-    start = time.time()
-    response = await call_next(request)
-    response.headers["X-Process-Time"] = f"{time.time() - start:.4f}"
-    return response
-
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
@@ -76,7 +77,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-from api.routers import user, catalog, analysis, look, reco, pricing, offer, webhooks, admin, vton
+from api.routers import user, catalog, analysis, look, reco, pricing, offer, webhooks, admin, vton, weather
 
 app.include_router(user.router, prefix="/api/user", tags=["User"])
 app.include_router(catalog.router, prefix="/api/catalog", tags=["Catalog"])
@@ -88,6 +89,7 @@ app.include_router(offer.router, prefix="/api/offer", tags=["Offer"])
 app.include_router(vton.router, prefix="/api/vton", tags=["VTON"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
 
 
 @app.get("/health")

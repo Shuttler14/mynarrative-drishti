@@ -46,17 +46,29 @@ async def create_try_on_job(
     }
 
     start = time.time()
+    max_retries = 3
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(f"{REPLICATE_API}/predictions", headers=headers, json=payload)
-            if resp.status_code != 201:
-                logger.error(f"Replicate create failed: {resp.status_code} {resp.text[:200]}")
-                return {"status": "error", "detail": f"Replicate API error: {resp.status_code}"}
+        # Create prediction with retry on 429
+        pred_id = None
+        for attempt in range(max_retries):
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(f"{REPLICATE_API}/predictions", headers=headers, json=payload)
+                if resp.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    logger.warning(f"Replicate rate limited (429), retrying in {wait}s (attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 201:
+                    logger.error(f"Replicate create failed: {resp.status_code} {resp.text[:200]}")
+                    return {"status": "error", "detail": f"Replicate API error: {resp.status_code}"}
+                pred = resp.json()
+                pred_id = pred["id"]
+                logger.info(f"Replicate prediction created: {pred_id}")
+                break
 
-            pred = resp.json()
-            pred_id = pred["id"]
-            logger.info(f"Replicate prediction created: {pred_id}")
+        if not pred_id:
+            return {"status": "error", "detail": "Replicate API rate limited after retries"}
 
         # Poll until done (max 120s)
         for _ in range(60):

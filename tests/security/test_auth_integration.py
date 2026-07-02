@@ -9,7 +9,7 @@ import base64
 import hashlib
 import hmac
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -62,7 +62,7 @@ class TestOTPSecurity:
             contact="+910000000001",
             otp_hash=otp_hash,
             purpose="login",
-            expires_at=datetime.utcnow() + timedelta(minutes=10),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
         )
         db.add(record)
         await db.flush()
@@ -130,7 +130,7 @@ class TestJWTSecurity:
         payload = {
             "sub": "user-123",
             "role": "user",
-            "exp": datetime.utcnow() - timedelta(seconds=1)
+            "exp": datetime.now(timezone.utc) - timedelta(seconds=1)
         }
         token = jwt.encode(payload, "test-secret-for-expiry-test-32-chars!!", algorithm="HS256")
         result = verify_token(token)

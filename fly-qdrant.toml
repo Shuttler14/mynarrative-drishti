@@ -1,34 +1,37 @@
-# fly-qdrant.toml — Qdrant vector DB on Fly.io
+# fly.toml app configuration file generated for drishti-qdrant-moonlit-morning-7709 on 2026-06-26T19:15:22+05:30
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "drishti-qdrant"
-primary = "iad"
+app = 'drishti-qdrant-moonlit-morning-7709'
+primary_region = 'ams'
 
 [build]
-  image = "qdrant/qdrant:v1.12.0"
+  image = 'qdrant/qdrant:v1.12.0'
+
+[[mounts]]
+  source = 'drishti_qdrant_data'
+  destination = '/qdrant/storage'
 
 [http_service]
   internal_port = 6333
-  force_https = false
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
   [http_service.concurrency]
-    type = "connections"
+    type = 'connections'
     hard_limit = 100
     soft_limit = 80
 
-[[http_service.checks]]
-  grace_period = "10s"
-  interval = "30s"
-  method = "GET"
-  path = "/healthz"
-
-[mounts]
-  source = "drishti_qdrant_data"
-  destination = "/qdrant/storage"
+  [[http_service.checks]]
+    interval = '30s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
 
 [[vm]]
-  memory = "512mb"
-  cpu_kind = "shared"
+  memory = '512mb'
+  cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 512

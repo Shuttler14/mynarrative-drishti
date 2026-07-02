@@ -34,17 +34,31 @@ class FeedbackRequest(BaseModel):
     feedback: str
 
 
+def _get_user_id(authorization: str | None) -> str | None:
+    """Extract user_id from authorization header. Returns None if not authenticated."""
+    if not authorization:
+        return None
+    payload = verify_token(authorization.replace("Bearer ", ""))
+    return payload["sub"] if payload else None
+
+
+def _require_user(authorization: str | None) -> str:
+    """Extract and verify user from authorization header. Raises 401 if not authenticated."""
+    if not authorization:
+        raise HTTPException(401, "Missing token")
+    payload = verify_token(authorization.replace("Bearer ", ""))
+    if not payload:
+        raise HTTPException(401, "Invalid token")
+    return payload["sub"]
+
+
 @router.post("/sessions")
 async def create_session(
     req: CreateSessionRequest,
     authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = None
-    if authorization:
-        payload = verify_token(authorization.replace("Bearer ", ""))
-        if payload:
-            user_id = payload["sub"]
+    user_id = _get_user_id(authorization)
 
     session = Session(
         user_id=user_id,
@@ -66,10 +80,20 @@ async def create_session(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
+async def get_session(
+    session_id: str,
+    authorization: str = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = _require_user(authorization)
+
     session = await db.get(Session, session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    # Ownership check: users can only access their own sessions
+    if session.user_id and str(session.user_id) != user_id:
+        raise HTTPException(403, "Not authorized to access this session")
 
     look_cards_stmt = select(LookCard).where(LookCard.session_id == session.id)
     result = await db.execute(look_cards_stmt)
@@ -102,11 +126,18 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
 async def add_look_card(
     session_id: str,
     req: AddLookCardRequest,
+    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
+    user_id = _require_user(authorization)
+
     session = await db.get(Session, session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    # Ownership check
+    if session.user_id and str(session.user_id) != user_id:
+        raise HTTPException(403, "Not authorized to modify this session")
 
     look_card = LookCard(
         session_id=session.id,
@@ -126,31 +157,58 @@ async def add_look_card(
 async def add_feedback(
     look_id: str,
     req: FeedbackRequest,
+    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
+    user_id = _require_user(authorization)
+
     look_card = await db.get(LookCard, look_id)
     if not look_card:
         raise HTTPException(404, "Look card not found")
+
+    # Ownership check
+    if look_card.user_id and str(look_card.user_id) != user_id:
+        raise HTTPException(403, "Not authorized to modify this look card")
 
     look_card.feedback = req.feedback
     return {"message": "Feedback recorded"}
 
 
 @router.post("/looks/{look_id}/save")
-async def save_look(look_id: str, db: AsyncSession = Depends(get_db)):
+async def save_look(
+    look_id: str,
+    authorization: str = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = _require_user(authorization)
+
     look_card = await db.get(LookCard, look_id)
     if not look_card:
         raise HTTPException(404, "Look card not found")
+
+    # Ownership check
+    if look_card.user_id and str(look_card.user_id) != user_id:
+        raise HTTPException(403, "Not authorized to modify this look card")
 
     look_card.is_saved = True
     return {"message": "Look saved"}
 
 
 @router.delete("/looks/{look_id}")
-async def delete_look(look_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_look(
+    look_id: str,
+    authorization: str = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = _require_user(authorization)
+
     look_card = await db.get(LookCard, look_id)
     if not look_card:
         raise HTTPException(404, "Look card not found")
+
+    # Ownership check
+    if look_card.user_id and str(look_card.user_id) != user_id:
+        raise HTTPException(403, "Not authorized to delete this look card")
 
     await db.delete(look_card)
     return {"message": "Look deleted"}
@@ -161,14 +219,9 @@ async def list_sessions(
     authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
+    user_id = _require_user(authorization)
 
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
-
-    stmt = select(Session).where(Session.user_id == payload["sub"]).order_by(Session.created_at.desc()).limit(50)
+    stmt = select(Session).where(Session.user_id == user_id).order_by(Session.created_at.desc()).limit(50)
     result = await db.execute(stmt)
     sessions = result.scalars().all()
 

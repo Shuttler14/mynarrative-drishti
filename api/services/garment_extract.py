@@ -55,13 +55,26 @@ async def _replicate_remove_bg(image_url: str) -> Optional[str]:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(f"{REPLICATE_API}/predictions", headers=headers, json=payload)
-            if resp.status_code != 201:
-                logger.error(f"Replicate rembg create failed: {resp.status_code} {resp.text[:200]}")
-                return None
-            pred = resp.json()
-            pred_id = pred["id"]
+        # Create prediction with retry on 429
+        pred_id = None
+        for attempt in range(3):
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(f"{REPLICATE_API}/predictions", headers=headers, json=payload)
+                if resp.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    logger.warning(f"Replicate rembg rate limited (429), retrying in {wait}s")
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 201:
+                    logger.error(f"Replicate rembg create failed: {resp.status_code} {resp.text[:200]}")
+                    return None
+                pred = resp.json()
+                pred_id = pred["id"]
+                break
+
+        if not pred_id:
+            logger.error("Replicate rembg rate limited after retries")
+            return None
 
         # Poll until done (max 60s)
         for _ in range(30):

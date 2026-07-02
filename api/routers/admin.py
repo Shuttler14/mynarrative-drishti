@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -24,6 +26,63 @@ def require_admin(authorization: str = Header(None)) -> dict:
     if payload.get("role") != "admin":
         raise HTTPException(403, "Admin access required")
     return payload
+
+
+def _require_admin_secret(authorization: str = Header(None)) -> bool:
+    """Simple shared-secret admin check for internal endpoints."""
+    import os
+    secret = os.getenv("ADMIN_SECRET", "")
+    if not secret:
+        raise HTTPException(500, "ADMIN_SECRET not configured")
+    token = authorization.replace("Bearer ", "") if authorization else ""
+    if token != secret:
+        raise HTTPException(403, "Invalid admin secret")
+    return True
+
+
+@router.post("/catalog/sync")
+async def trigger_catalog_sync(
+    authorization: str = Header(None),
+    max_products: int = Query(1000, ge=1, le=5000),
+):
+    """Trigger full catalog sync from Shopify to Qdrant. No JWT needed — uses shared secret."""
+    import logging
+    logger = logging.getLogger("drishti.admin")
+
+    _require_admin_secret(authorization)
+
+    try:
+        from api.services.catalog_sync import full_sync
+        result = await full_sync(max_products=max_products)
+        return {"status": "ok", "sync": result}
+    except Exception as e:
+        logger.error(f"Catalog sync failed: {e}", exc_info=True)
+        raise HTTPException(500, f"Sync failed: {str(e)}")
+
+
+@router.get("/catalog/status")
+async def catalog_status(authorization: str = Header(None)):
+    """Check Qdrant catalog status."""
+    _require_admin_secret(authorization)
+
+    try:
+        from api.services.catalog_sync import get_qdrant_client, COLLECTION_NAME
+        client = get_qdrant_client()
+        collections = client.get_collections().collections
+        names = [c.name for c in collections]
+
+        if COLLECTION_NAME not in names:
+            return {"status": "empty", "collection_exists": False, "count": 0}
+
+        info = collection_info = client.get_collection(COLLECTION_NAME)
+        return {
+            "status": "ok",
+            "collection_exists": True,
+            "count": collection_info.points_count or 0,
+            "vectors_size": collection_info.config.params.vectors.size if collection_info.config.params.vectors else 0,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 class AdminDashboard(BaseModel):
@@ -154,14 +213,85 @@ async def get_analytics(
     db: AsyncSession = Depends(get_db),
     _admin: dict = Depends(require_admin),
 ):
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=today_start.weekday())
+    month_start = today_start.replace(day=1)
+
+    # DAU: users with sessions today
+    dau_stmt = (
+        select(func.count(func.distinct(Session.user_id)))
+        .where(Session.created_at >= today_start)
+        .where(Session.user_id.isnot(None))
+    )
+    dau = (await db.execute(dau_stmt)).scalar() or 0
+
+    # WAU: users with sessions this week
+    wau_stmt = (
+        select(func.count(func.distinct(Session.user_id)))
+        .where(Session.created_at >= week_start)
+        .where(Session.user_id.isnot(None))
+    )
+    wau = (await db.execute(wau_stmt)).scalar() or 0
+
+    # MAU: users with sessions this month
+    mau_stmt = (
+        select(func.count(func.distinct(Session.user_id)))
+        .where(Session.created_at >= month_start)
+        .where(Session.user_id.isnot(None))
+    )
+    mau = (await db.execute(mau_stmt)).scalar() or 0
+
+    # Average looks per session
+    avg_looks_stmt = (
+        select(func.avg(func.count(LookCard.id)))
+        .join(Session, LookCard.session_id == Session.id)
+        .group_by(Session.id)
+    )
+    avg_looks_result = (await db.execute(avg_looks_stmt)).scalar()
+    avg_looks_per_session = round(float(avg_looks_result or 0), 1)
+
+    # VTON conversion rate: completed / total
+    total_vton = (await db.execute(select(func.count(VTONJob.id)))).scalar() or 0
+    completed_vton = (
+        await db.execute(
+            select(func.count(VTONJob.id)).where(VTONJob.status == "completed")
+        )
+    ).scalar() or 0
+    vton_conversion_rate = round(completed_vton / total_vton * 100, 1) if total_vton > 0 else 0
+
+    # Top categories (from products table)
+    top_categories_stmt = (
+        select(Product.category, func.count(Product.id).label("count"))
+        .where(Product.category.isnot(None))
+        .group_by(Product.category)
+        .order_by(func.count(Product.id).desc())
+        .limit(5)
+    )
+    top_categories_result = await db.execute(top_categories_stmt)
+    top_categories = [{"category": r[0], "count": r[1]} for r in top_categories_result.all()]
+
+    # Top brands
+    top_brands_stmt = (
+        select(Product.brand, func.count(Product.id).label("count"))
+        .where(Product.brand.isnot(None))
+        .group_by(Product.brand)
+        .order_by(func.count(Product.id).desc())
+        .limit(5)
+    )
+    top_brands_result = await db.execute(top_brands_stmt)
+    top_brands = [{"brand": r[0], "count": r[1]} for r in top_brands_result.all()]
+
+    # Session duration: approximate from session analytics JSON if available
+    avg_session_duration = 0  # TODO: implement if session duration tracking is added
 
     return {
-        "daily_active_users": 0,
-        "weekly_active_users": 0,
-        "monthly_active_users": 0,
-        "avg_session_duration_minutes": 0,
-        "avg_looks_per_session": 0,
-        "vton_conversion_rate": 0,
-        "top_categories": [],
-        "top_brands": [],
+        "daily_active_users": dau,
+        "weekly_active_users": wau,
+        "monthly_active_users": mau,
+        "avg_session_duration_minutes": avg_session_duration,
+        "avg_looks_per_session": avg_looks_per_session,
+        "vton_conversion_rate": vton_conversion_rate,
+        "top_categories": top_categories,
+        "top_brands": top_brands,
     }

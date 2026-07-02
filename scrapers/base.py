@@ -10,7 +10,7 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -154,5 +154,5 @@ class BaseScraper(ABC):
             "rating": raw.get("rating"),
             "review_count": raw.get("review_count", 0),
             "availability": raw.get("availability", True),
-            "last_scraped": datetime.utcnow().isoformat(),
+            "last_scraped": datetime.now(timezone.utc).isoformat(),
         }

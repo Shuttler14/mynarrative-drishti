@@ -82,7 +82,7 @@ async def handle_order_created(order: dict):
                     phone=customer.get("phone"),
                 )
                 db.add(new_user)
-                await db.commit()
+                await db.flush()
 
 
 async def handle_order_paid(order: dict):
