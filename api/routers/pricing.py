@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel
@@ -8,8 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
-from api.models.schema import PriceAlert
+from api.models.schema import Product, PriceAlert
+from api.services.price_scraper import compare_prices as scrape_compare
 from api.utils.auth import verify_token
+
+logger = logging.getLogger("drishti.pricing")
 
 router = APIRouter()
 
@@ -21,51 +26,108 @@ class CreateAlertRequest(BaseModel):
     target_price: float
 
 
-class PriceComparison(BaseModel):
-    source: str
-    source_id: str
-    source_url: str | None = None
-    price: float
-    original_price: float | None = None
-    discount_pct: float | None = None
-    availability: bool = True
-
-
 @router.get("/compare/{source}/{source_id}")
-async def compare_prices(source: str, source_id: str):
-    comparisons = [
-        PriceComparison(
-            source=src,
-            source_id=source_id,
-            source_url=f"https://{src}.in/product/{source_id}",
-            price=price,
-            original_price=orig,
-            discount_pct=round((1 - price / orig) * 100) if orig else None,
-        ).model_dump()
-        for src, price, orig in [
-            ("myntra", 1299, 1999),
-            ("ajio", 1199, 1899),
-            ("amazon", 1399, 1999),
-            ("flipkart", 1349, 1999),
-        ]
-    ]
+async def compare_prices(
+    source: str,
+    source_id: str,
+    product_name: str = Query(None),
+    brand: str = Query(None),
+    category: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare prices across Myntra, AJIO, and Amazon.
+    Uses live scraping with anti-blocking measures."""
 
-    best = min(comparisons, key=lambda x: x["price"])
+    # Get product info from local catalog if available
+    stmt = select(Product).where(Product.source_id == source_id)
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+
+    if product:
+        product_name = product_name or product.title or ""
+        brand = brand or product.brand or ""
+        category = category or product.category or ""
+
+    if not product_name:
+        raise HTTPException(400, "product_name query param required when product not in local catalog")
+
+    # Scrape live prices from all platforms
+    try:
+        comparison = await scrape_compare(
+            product_name=product_name,
+            brand=brand,
+            category=category,
+            sources=["myntra", "ajio", "amazon"],
+        )
+    except Exception as e:
+        logger.error(f"Scraping failed: {e}")
+        # Fallback: return local catalog data only
+        comparison = {"query": product_name, "results": [], "total_found": 0, "best_price": None, "savings": 0}
+
+    # Add local Shopify data if available
+    if product and product.price:
+        comparison["results"].insert(0, {
+            "source": "shopify",
+            "product_id": source_id,
+            "title": product.title or "",
+            "brand": product.brand or "",
+            "price": product.price or 0,
+            "mrp": product.original_price or product.price or 0,
+            "discount_pct": product.discount_pct or 0,
+            "rating": 0,
+            "rating_count": 0,
+            "image_url": product.image_url or "",
+            "url": product.source_url or "",
+            "color": "",
+            "category": product.category or "",
+        })
+
+    # Recalculate best after adding Shopify
+    available = [p for p in comparison["results"] if p.get("price", 0) > 0]
+    available.sort(key=lambda x: x["price"])
+    comparison["best_price"] = available[0] if available else None
+    if len(available) > 1:
+        comparison["savings"] = available[-1]["price"] - available[0]["price"]
+    else:
+        comparison["savings"] = 0
+
     return {
         "source": source,
         "source_id": source_id,
-        "comparisons": sorted(comparisons, key=lambda x: x["price"]),
-        "best_price": best,
-        "savings": max(c["price"] for c in comparisons) - best["price"],
+        "comparisons": comparison["results"],
+        "best_price": comparison["best_price"],
+        "savings": comparison.get("savings", 0),
+        "compared_at": comparison.get("compared_at"),
     }
 
 
 @router.get("/compare-by-url")
-async def compare_by_url(url: str = Query(...)):
+async def compare_by_url(
+    url: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """URL-based price comparison. Extracts product info and scrapes live prices."""
+    
+    # Try to find by URL pattern in local catalog
+    stmt = select(Product).where(Product.source_url.ilike(f"%{url}%"))
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+
+    if product and product.source and product.source_id:
+        return await compare_prices(
+            source=product.source,
+            source_id=product.source_id,
+            product_name=product.title,
+            brand=product.brand,
+            db=db,
+        )
+
+    # If not found locally, try to extract product name from URL and search
+    # e.g., Myntra URLs contain product slugs
     return {
         "url": url,
         "comparisons": [],
-        "message": "URL-based comparison requires scraper integration",
+        "message": "Product not found in local catalog. Use /compare endpoint with product details.",
     }
 
 
@@ -148,6 +210,9 @@ async def delete_price_alert(
     alert = await db.get(PriceAlert, alert_id)
     if not alert:
         raise HTTPException(404, "Alert not found")
+
+    if str(alert.user_id) != payload["sub"]:
+        raise HTTPException(403, "Not authorized to delete this alert")
 
     alert.is_active = False
     return {"message": "Alert deleted"}
