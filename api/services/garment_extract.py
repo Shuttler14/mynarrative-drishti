@@ -28,7 +28,7 @@ from PIL import Image
 logger = logging.getLogger("drishti.garment")
 
 REPLICATE_API = "https://api.replicate.com/v1"
-REPLICATE_REMBG_MODEL = "cjwbw/rembg:7d169b277d85e2dd060c3a2ddf07ea447713e77c097e8cf8d4dd6c67e3e64c73"
+REPLICATE_REMBG_VERSION = "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003"
 
 
 def _get_token() -> str:
@@ -48,7 +48,7 @@ async def _replicate_remove_bg(image_url: str) -> Optional[str]:
     }
 
     payload = {
-        "version": REPLICATE_REMBG_MODEL.split(":")[-1],
+        "version": REPLICATE_REMBG_VERSION,
         "input": {
             "image": image_url,
         },
