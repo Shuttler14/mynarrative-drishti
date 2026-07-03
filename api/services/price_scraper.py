@@ -476,25 +476,42 @@ async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
             chunk = html[start:end]
             product_id = match.group(1)
 
-            # Title
-            title_match = re.search(r'class="_1WtVRc"[^>]*>(.*?)</a>', chunk, re.DOTALL)
-            if not title_match:
-                title_match = re.search(r'class="IRpwTa"[^>]*>(.*?)</a>', chunk, re.DOTALL)
-            title = re.sub(r'<[^>]+>', '', title_match.group(1)).strip() if title_match else ""
+            # Title — try multiple patterns
+            title = ""
+            # Pattern 1: href with title attribute
+            title_match = re.search(r'href="[^"]*"[^>]*title="([^"]+)"', chunk)
+            if title_match:
+                title = title_match.group(1).strip()
+            # Pattern 2: Look for text that looks like a product title (capitalized, 20+ chars)
+            if not title:
+                for tm in re.finditer(r'>([A-Z][^<]{15,80})</(?:a|span|div)', chunk):
+                    t = tm.group(1).strip()
+                    if len(t) > 15 and not t.startswith('₹'):
+                        title = t
+                        break
+            # Pattern 3: data-id chunk with common class names
+            if not title:
+                title_match = re.search(r'class="[^"]*(?:title|name|product)[^"]*"[^>]*>([^<]+)<', chunk)
+                if title_match:
+                    title = title_match.group(1).strip()
 
             # Price
-            price_match = re.search(r'class="_1WtVRc"[^>]*>.*?₹([\d,]+)', chunk, re.DOTALL)
-            if not price_match:
-                price_match = re.search(r'₹([\d,]+)', chunk)
+            price_match = re.search(r'₹([\d,]+)', chunk)
             price = int(price_match.group(1).replace(",", "")) if price_match else 0
 
-            # MRP
-            mrp_match = re.search(r'class="_3I9_wc"[^>]*>₹([\d,]+)', chunk)
-            mrp = int(mrp_match.group(1).replace(",", "")) if mrp_match else price
+            # MRP (second ₹ in the chunk, usually strikethrough)
+            mrp_prices = re.findall(r'₹([\d,]+)', chunk)
+            mrp = int(mrp_prices[1].replace(",", "")) if len(mrp_prices) > 1 else price
 
             # Rating
             rating_match = re.search(r'(\d+\.?\d*)\s*★', chunk)
+            if not rating_match:
+                rating_match = re.search(r'(\d+\.?\d*)\s*out of\s*5', chunk)
             rating = float(rating_match.group(1)) if rating_match else 0
+
+            # Image
+            img_match = re.search(r'<img[^>]*src="(https://[^"]+flipkart[^"]+)"', chunk)
+            image_url = img_match.group(1) if img_match else ""
 
             if title and price > 0:
                 products.append({
@@ -507,8 +524,8 @@ async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
                     "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
                     "rating": rating,
                     "rating_count": 0,
-                    "image_url": "",
-                    "url": f"https://www.flipkart.com/product/{product_id}",
+                    "image_url": image_url,
+                    "url": f"https://www.flipkart.com/search?q={search_query}",
                     "color": "",
                     "category": "",
                 })

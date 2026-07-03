@@ -20,28 +20,28 @@ logger = logging.getLogger("drishti.reco.marketplace")
 
 # ── Occasion → clothing category mapping ──
 _OCCASION_CATEGORIES = {
-    "casual": ["tshirt", "shirt", "jeans", "shorts", "sneakers"],
-    "casual brunch": ["tshirt", "shirt", "casual shoes"],
-    "work": ["formal shirt", "trousers", "formal shoes"],
-    "office": ["formal shirt", "trousers", "blazer"],
-    "wedding": ["kurta", "sherwani", "nehru jacket", "mojari"],
-    "party": ["shirt", "blazer", "formal shoes"],
-    "date": ["shirt", "jeans", "sneakers"],
-    "gym": ["tank top", "track pants", "sneakers"],
-    "beach": ["shorts", "flip flops", "sunglasses"],
-    "festival": ["kurta", "ethnic jacket", "mojari"],
-    "interview": ["formal shirt", "trousers", "formal shoes"],
-    "travel": ["tshirt", "jeans", "sneakers"],
-    "college": ["tshirt", "jeans", "sneakers"],
-    "outing": ["tshirt", "jeans", "sneakers"],
-    "brunch": ["shirt", "chinos", "loafers"],
-    "dinner": ["shirt", "trousers", "formal shoes"],
-    "concert": ["tshirt", "jeans", "sneakers"],
-    "sport": ["tshirt", "shorts", "sneakers"],
-    "festive": ["kurta", "ethnic jacket"],
-    "puja": ["kurta", "dhoti"],
-    "haldi": ["kurta", "yellow"],
-    "sangeet": ["sherwani", "nehru jacket"],
+    "casual": ["tshirt men", "casual shirt men", "jeans men"],
+    "casual brunch": ["casual shirt men", "polo tshirt men"],
+    "work": ["formal shirt men", "formal trousers men"],
+    "office": ["formal shirt men", "blazer men"],
+    "wedding": ["kurta men", "nehru jacket men"],
+    "party": ["party shirt men", "blazer men"],
+    "date": ["shirt men", "jeans men"],
+    "gym": ["gym tshirt men", "track pants men"],
+    "beach": ["beach shorts men", "flip flops men"],
+    "festival": ["kurta men", "ethnic jacket men"],
+    "interview": ["formal shirt men", "formal shoes men"],
+    "travel": ["tshirt men", "travel jeans men"],
+    "college": ["tshirt men", "jeans men casual"],
+    "outing": ["tshirt men", "casual shirt men"],
+    "brunch": ["casual shirt men", "chinos men"],
+    "dinner": ["formal shirt men", "trousers men"],
+    "concert": ["oversized tshirt men", "streetwear men"],
+    "sport": ["sports tshirt men", "shorts men"],
+    "festive": ["kurta men", "ethnic wear men"],
+    "puja": ["kurta men traditional"],
+    "haldi": ["yellow kurta men"],
+    "sangeet": ["sherwani men", "nehru jacket men"],
 }
 
 # ── Style → search keyword mapping ──
@@ -109,54 +109,29 @@ def _build_search_queries(
     """
     queries = []
     
-    # Get occasion categories
+    # Get occasion categories (already include "men" suffix)
     occ_lower = occasion.lower() if occasion else "casual"
-    categories = _OCCASION_CATEGORIES.get(occ_lower, ["tshirt", "shirt"])
-    
-    # Get style keywords
-    style_kw = _STYLE_KEYWORDS.get(style.lower(), [style]) if style else []
-    
-    # Get gender prefix
-    gender_prefix = _GENDER_QUERY.get(gender.lower(), "") if gender else ""
-    
-    # Get fit recommendation
-    fit = _BODY_FIT.get(body_shape.lower(), "") if body_shape else ""
+    categories = _OCCASION_CATEGORIES.get(occ_lower, ["tshirt men", "casual shirt men"])
     
     # Get weather fabric
     fabric_kws = _WEATHER_FABRIC.get(weather_condition.lower(), []) if weather_condition else []
     
     # Build queries for each category
-    for cat in categories[:4]:  # Max 4 queries
-        parts = []
+    for cat in categories[:3]:  # Max 3 queries
+        parts = [cat]
         
-        # Style keyword first
-        if style_kw:
-            parts.append(style_kw[0])
+        # Add style modifier if not already in the category
+        if style and style.lower() not in cat.lower():
+            style_kw = _STYLE_KEYWORDS.get(style.lower(), [])
+            if style_kw and style_kw[0] not in cat.lower():
+                parts.insert(0, style_kw[0])
         
-        # Category
-        parts.append(cat)
-        
-        # Gender
-        if gender_prefix:
-            parts.append(gender_prefix)
-        
-        # Fabric (from weather)
-        if fabric_kws:
+        # Add fabric for weather
+        if fabric_kws and fabric_kws[0] not in cat.lower():
             parts.append(fabric_kws[0])
-        
-        # Fit
-        if fit and cat in ["tshirt", "shirt", "jeans", "trousers"]:
-            parts.append(fit)
         
         query = " ".join(parts)
         queries.append(query)
-    
-    # Add one gender-specific general query
-    if gender_prefix:
-        general = f"{style or 'casual'} clothing {gender_prefix}"
-        if weather_condition:
-            general += f" {fabric_kws[0] if fabric_kws else ''}"
-        queries.append(general)
     
     return queries
 
