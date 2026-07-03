@@ -29,7 +29,7 @@ _USER_AGENTS = [
 _cache: dict[str, tuple[float, dict]] = {}
 CACHE_TTL = 86400
 _last_request: dict[str, float] = {}
-MIN_DELAY = 0.8
+MIN_DELAY = 0.5
 
 
 def _cache_key(domain: str, query: str) -> str:
@@ -57,6 +57,24 @@ async def _rate_limit(domain: str):
     if wait > 0:
         await asyncio.sleep(wait)
     _last_request[domain] = time.time()
+
+
+async def _fetch_with_retry(url: str, headers: dict, max_retries: int = 1, timeout: int = 10) -> Optional[httpx.Response]:
+    """Fetch URL with one retry on failure. Returns None if all retries fail."""
+    for attempt in range(max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, http1=True, http2=False) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200 and len(resp.text) > 5000:
+                    return resp
+                if attempt < max_retries:
+                    await asyncio.sleep(1)
+        except Exception as e:
+            if attempt < max_retries:
+                await asyncio.sleep(1)
+            else:
+                logger.warning(f"Fetch failed: {url} — {e}")
+    return None
 
 
 def _headers(domain: str = "") -> dict:
@@ -89,23 +107,11 @@ async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
 
     await _rate_limit("amazon.in")
     search_url = f"https://www.amazon.in/s?k={query.replace(' ', '+')}&ref=nb_sb_noss"
-
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
-            resp = await client.get(search_url, headers=_headers("www.amazon.in"))
-            if resp.status_code != 200:
-                logger.warning(f"Amazon: HTTP {resp.status_code}")
-                return []
-            html = resp.text
-    except Exception as e:
-        logger.warning(f"Amazon error: {e}")
+    resp = await _fetch_with_retry(search_url, _headers("www.amazon.in"))
+    if not resp:
         return []
 
-    # Bot detection — page too small
-    if len(html) < 5000:
-        logger.warning(f"Amazon: bot detection (len={len(html)})")
-        return []
-
+    html = resp.text
     products = []
     results = list(re.finditer(r'data-component-type="s-search-result"', html))
 
@@ -182,23 +188,11 @@ async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
 
     await _rate_limit("flipkart.com")
     search_url = f"https://www.flipkart.com/search?q={query.replace(' ', '+')}"
-
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
-            resp = await client.get(search_url, headers=_headers())
-            if resp.status_code != 200:
-                logger.warning(f"Flipkart: HTTP {resp.status_code}")
-                return []
-            html = resp.text
-    except Exception as e:
-        logger.warning(f"Flipkart error: {e}")
+    resp = await _fetch_with_retry(search_url, _headers())
+    if not resp:
         return []
 
-    # Bot detection — page is too small
-    if len(html) < 5000:
-        logger.warning(f"Flipkart: bot detection (len={len(html)})")
-        return []
-
+    html = resp.text
     products = []
 
     # Strategy 1: Parse __INITIAL_STATE__ JSON
@@ -378,23 +372,11 @@ async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:
 
     await _rate_limit("myntra.com")
     url = _query_to_myntra_url(query)
-
-    try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True, http2=True) as client:
-            resp = await client.get(url, headers=_headers())
-            if resp.status_code != 200:
-                logger.warning(f"Myntra: HTTP {resp.status_code} for {url}")
-                return []
-            html = resp.text
-    except Exception as e:
-        logger.warning(f"Myntra error: {e}")
+    resp = await _fetch_with_retry(url, _headers())
+    if not resp:
         return []
 
-    # Bot detection — page too small
-    if len(html) < 5000:
-        logger.warning(f"Myntra: bot detection (len={len(html)})")
-        return []
-
+    html = resp.text
     products = []
     try:
         # Extract window.__myx JSON
@@ -465,62 +447,54 @@ async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:
 # ══════════════════════════════════════════════════════════════
 
 async def scrape_ajio(query: str, max_results: int = 10) -> list[dict]:
-    """Scrape AJIO. Best-effort — may be blocked."""
+    """Scrape AJIO. Best-effort — often blocked by Cloudflare."""
     cached = _get_cached("ajio.com", query)
     if cached:
         return cached.get("products", [])[:max_results]
 
     await _rate_limit("ajio.com")
     search_url = f"https://www.ajio.com/search/?text={query.replace(' ', '%20')}"
-
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
-            resp = await client.get(search_url, headers=_headers())
-            if resp.status_code != 200:
-                return []
-            html = resp.text
-
-        products = []
-        # Try to find product data in script tags
-        scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.DOTALL)
-        for s in scripts:
-            if "productId" in s and "price" in s:
-                pids = re.findall(r'"productId"\s*:\s*"([^"]+)"', s)
-                names = re.findall(r'"name"\s*:\s*"([^"]+)"', s)
-                prices_vals = re.findall(r'"value"\s*:\s*(\d+)', s)
-                brands = re.findall(r'"brandName"\s*:\s*"([^"]+)"', s)
-
-                for j in range(min(len(pids), max_results)):
-                    pid = pids[j] if j < len(pids) else ""
-                    name = names[j] if j < len(names) else ""
-                    price = int(prices_vals[j]) if j < len(prices_vals) else 0
-                    brand = brands[j] if j < len(brands) else ""
-
-                    if name and price > 0:
-                        products.append({
-                            "source": "ajio",
-                            "product_id": pid,
-                            "title": f"{brand} {name}".strip(),
-                            "brand": brand,
-                            "price": price,
-                            "mrp": price,
-                            "discount_pct": 0,
-                            "rating": 0,
-                            "rating_count": 0,
-                            "image_url": "",
-                            "url": f"https://www.ajio.com/p/{pid}",
-                            "color": "",
-                            "category": "",
-                        })
-                break
-
-        if products:
-            _set_cache("ajio.com", query, {"products": products})
-        return products
-
-    except Exception as e:
-        logger.warning(f"AJIO error: {e}")
+    resp = await _fetch_with_retry(search_url, _headers())
+    if not resp:
         return []
+
+    html = resp.text
+    products = []
+    scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.DOTALL)
+    for s in scripts:
+        if "productId" in s and "price" in s:
+            pids = re.findall(r'"productId"\s*:\s*"([^"]+)"', s)
+            names = re.findall(r'"name"\s*:\s*"([^"]+)"', s)
+            prices_vals = re.findall(r'"value"\s*:\s*(\d+)', s)
+            brands = re.findall(r'"brandName"\s*:\s*"([^"]+)"', s)
+
+            for j in range(min(len(pids), max_results)):
+                pid = pids[j] if j < len(pids) else ""
+                name = names[j] if j < len(names) else ""
+                price = int(prices_vals[j]) if j < len(prices_vals) else 0
+                brand = brands[j] if j < len(brands) else ""
+
+                if name and price > 0:
+                    products.append({
+                        "source": "ajio",
+                        "product_id": pid,
+                        "title": f"{brand} {name}".strip(),
+                        "brand": brand,
+                        "price": price,
+                        "mrp": price,
+                        "discount_pct": 0,
+                        "rating": 0,
+                        "rating_count": 0,
+                        "image_url": "",
+                        "url": f"https://www.ajio.com/p/{pid}",
+                        "color": "",
+                        "category": "",
+                    })
+            break
+
+    if products:
+        _set_cache("ajio.com", query, {"products": products})
+    return products
 
 
 # ══════════════════════════════════════════════════════════════
@@ -535,51 +509,44 @@ async def scrape_nykaa(query: str, max_results: int = 10) -> list[dict]:
 
     await _rate_limit("nykaafashion.com")
     search_url = f"https://www.nykaafashion.com/search?q={query.replace(' ', '+')}"
-
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
-            resp = await client.get(search_url, headers=_headers())
-            if resp.status_code != 200:
-                return []
-            html = resp.text
-
-        products = []
-        # Try __NEXT_DATA__
-        nd = re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-        if nd:
-            data = json.loads(nd.group(1))
-            items = data.get("props", {}).get("pageProps", {}).get("products", [])
-            for item in items[:max_results]:
-                pid = item.get("id", "")
-                name = item.get("name", "")
-                price = item.get("price", 0)
-                mrp = item.get("mrp", price)
-                brand = item.get("brand", "")
-
-                if name and price > 0:
-                    products.append({
-                        "source": "nykaa",
-                        "product_id": str(pid),
-                        "title": f"{brand} {name}".strip(),
-                        "brand": brand,
-                        "price": price,
-                        "mrp": mrp if mrp >= price else price,
-                        "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
-                        "rating": item.get("rating", 0),
-                        "rating_count": item.get("ratingCount", 0),
-                        "image_url": item.get("image", ""),
-                        "url": f"https://www.nykaafashion.com/p/{pid}",
-                        "color": "",
-                        "category": "",
-                    })
-
-        if products:
-            _set_cache("nykaafashion.com", query, {"products": products})
-        return products
-
-    except Exception as e:
-        logger.warning(f"Nykaa error: {e}")
+    resp = await _fetch_with_retry(search_url, _headers())
+    if not resp:
         return []
+
+    html = resp.text
+    products = []
+    # Try __NEXT_DATA__
+    nd = re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+    if nd:
+        data = json.loads(nd.group(1))
+        items = data.get("props", {}).get("pageProps", {}).get("products", [])
+        for item in items[:max_results]:
+            pid = item.get("id", "")
+            name = item.get("name", "")
+            price = item.get("price", 0)
+            mrp = item.get("mrp", price)
+            brand = item.get("brand", "")
+
+            if name and price > 0:
+                products.append({
+                    "source": "nykaa",
+                    "product_id": str(pid),
+                    "title": f"{brand} {name}".strip(),
+                    "brand": brand,
+                    "price": price,
+                    "mrp": mrp if mrp >= price else price,
+                    "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
+                    "rating": item.get("rating", 0),
+                    "rating_count": item.get("ratingCount", 0),
+                    "image_url": item.get("image", ""),
+                    "url": f"https://www.nykaafashion.com/p/{pid}",
+                    "color": "",
+                    "category": "",
+                })
+
+    if products:
+        _set_cache("nykaafashion.com", query, {"products": products})
+    return products
 
 
 # ══════════════════════════════════════════════════════════════
@@ -667,20 +634,36 @@ async def compare_prices(
         "nykaa": lambda q: scrape_nykaa(q, 5),
     }
 
-    # Run scrapers sequentially to avoid rate limiting conflicts
+    # Run main scrapers in parallel for speed, best-effort ones sequentially
     all_products = []
     active_sources = []
-    for s in sources:
+
+    # Parallel: Amazon + Flipkart + Myntra (the 3 that work)
+    main_tasks = []
+    main_names = []
+    for s in ["amazon", "flipkart", "myntra"]:
+        if s in _SCRAPERS:
+            main_tasks.append(_SCRAPERS[s](query))
+            main_names.append(s)
+
+    main_results = await asyncio.gather(*main_tasks, return_exceptions=True)
+    for name, result in zip(main_names, main_results):
+        if isinstance(result, list) and result:
+            all_products.extend(result)
+            active_sources.append(name)
+        elif isinstance(result, Exception):
+            logger.warning(f"Scraper {name} failed: {result}")
+
+    # Sequential: AJIO + Nykaa (best-effort, often blocked)
+    for s in ["ajio", "nykaa"]:
         if s in _SCRAPERS:
             try:
-                result = await asyncio.wait_for(_SCRAPERS[s](query), timeout=20)
+                result = await asyncio.wait_for(_SCRAPERS[s](query), timeout=10)
                 if isinstance(result, list) and result:
                     all_products.extend(result)
                     active_sources.append(s)
-            except asyncio.TimeoutError:
-                logger.warning(f"Scraper {s} timed out")
-            except Exception as e:
-                logger.warning(f"Scraper {s} failed: {e}")
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning(f"Scraper {s} skipped: {e}")
 
     all_products.sort(key=lambda x: x.get("price", float("inf")))
     available = [p for p in all_products if p.get("price", 0) > 0]
