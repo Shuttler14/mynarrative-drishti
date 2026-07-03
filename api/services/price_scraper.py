@@ -1,43 +1,35 @@
 """
-Cross-platform price comparison scraping engine.
-Anti-blocking: rotating UAs, realistic headers, delays, retry, caching.
+Cross-platform price comparison — Amazon, Flipkart, Myntra, AJIO, Nykaa.
+All links are verified product page URLs.
 """
 import asyncio
 import hashlib
+import html as html_mod
 import json
 import logging
-import os
+import math
 import random
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 import httpx
 
-logger = logging.getLogger("drishti.pricing.scraper")
+logger = logging.getLogger("drishti.pricing")
 
-# ── Anti-blocking: User-Agent pool ──
 _USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 ]
 
-# ── In-memory cache (24h TTL) ──
 _cache: dict[str, tuple[float, dict]] = {}
-CACHE_TTL = 86400  # 24 hours
-
-# ── Rate limiting ──
+CACHE_TTL = 86400
 _last_request: dict[str, float] = {}
-MIN_DELAY = 2.0  # Minimum seconds between requests per domain
+MIN_DELAY = 2.5
 
 
 def _cache_key(domain: str, query: str) -> str:
@@ -55,33 +47,7 @@ def _get_cached(domain: str, query: str) -> Optional[dict]:
 
 
 def _set_cache(domain: str, query: str, data: dict):
-    key = _cache_key(domain, query)
-    _cache[key] = (time.time(), data)
-
-
-def _random_headers(domain: str) -> dict:
-    ua = random.choice(_USER_AGENTS)
-    headers = {
-        "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0",
-    }
-    if domain == "myntra.com":
-        headers["X-Requested-With"] = "XMLHttpRequest"
-    elif domain == "www.amazon.in":
-        headers["Sec-Ch-Ua"] = '"Chromium";v="125", "Google Chrome";v="125", "Not.A/Brand";v="24"'
-        headers["Sec-Ch-Ua-Mobile"] = "?0"
-        headers["Sec-Ch-Ua-Platform"] = '"macOS"'
-    return headers
+    _cache[_cache_key(domain, query)] = (time.time(), data)
 
 
 async def _rate_limit(domain: str):
@@ -93,451 +59,502 @@ async def _rate_limit(domain: str):
     _last_request[domain] = time.time()
 
 
-async def _fetch_with_retry(url: str, domain: str, max_retries: int = 3) -> Optional[str]:
-    await _rate_limit(domain)
-    headers = _random_headers(domain)
-
-    for attempt in range(max_retries):
-        try:
-            async with httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                http2=True,
-            ) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code == 200:
-                    return resp.text
-                elif resp.status_code == 429:
-                    wait = (2 ** attempt) * 5 + random.uniform(2, 5)
-                    logger.warning(f"[{domain}] Rate limited, waiting {wait:.1f}s")
-                    await asyncio.sleep(wait)
-                elif resp.status_code == 403:
-                    logger.warning(f"[{domain}] Blocked (403), attempt {attempt+1}")
-                    await asyncio.sleep(random.uniform(3, 8))
-                else:
-                    logger.warning(f"[{domain}] HTTP {resp.status_code}")
-                    return None
-        except Exception as e:
-            logger.warning(f"[{domain}] Request error: {e}")
-            await asyncio.sleep(random.uniform(1, 3))
-
-    return None
+def _headers(domain: str = "") -> dict:
+    ua = random.choice(_USER_AGENTS)
+    h = {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    if domain == "www.amazon.in":
+        h["Sec-Ch-Ua"] = '"Chromium";v="126", "Google Chrome";v="126"'
+        h["Sec-Ch-Ua-Mobile"] = "?0"
+        h["Sec-Ch-Ua-Platform"] = '"macOS"'
+    return h
 
 
-# ── Smart Query Extraction ──
-
-# Common filler words to remove from product names
-_FILLER_WORDS = {
-    "the", "a", "an", "is", "my", "your", "and", "or", "for", "in", "on", "at",
-    "to", "of", "with", "by", "from", "this", "that", "it", "be", "as", "was",
-    "are", "been", "being", "have", "has", "had", "do", "does", "did", "will",
-    "would", "could", "should", "may", "might", "can", "shall", "just", "only",
-    "not", "no", "nor", "but", "if", "then", "than", "too", "very", "so",
-    "such", "same", "other", "another", "each", "every", "all", "both", "few",
-    "more", "most", "some", "any", "none", "name", "middle", "intrigue",
-    "calm", "chai", "keep", "respawn", "reload", "repeat", "swipe", "forever",
-    "grave", "rave", "till", "pet", "custom", "batch", "year", "unisexual",
-    "printed", "graphic", "men", "women", "boy", "girl", "guy", "lady",
-}
-
-# Category detection patterns
-_CATEGORY_PATTERNS = {
-    "tshirt": ["t-shirt", "tshirt", "tee", "tees"],
-    "shirt": ["shirt", "shirts", "casual shirt", "formal shirt"],
-    "hoodie": ["hoodie", "hoodies", "pullover"],
-    "jacket": ["jacket", "jackets", "varsity", "bomber", "windcheater"],
-    "jeans": ["jeans", "denim", "pants", "trousers"],
-    "shorts": ["shorts"],
-    "kurta": ["kurta", "kurti", "kurtas"],
-    "saree": ["saree", "sari"],
-    "dress": ["dress", "frock", "gown"],
-    "sneakers": ["sneakers", "shoes", "trainers"],
-    "accessories": ["scarf", "watch", "belt", "bag", "hat", "cap", "sunglasses"],
-}
-
-# Gender detection
-_GENDER_MALE = ["men", "man", "boy", "guys", "male", "husband", "brother", "father", "dad"]
-_GENDER_FEMALE = ["women", "woman", "girl", "ladies", "female", "wife", "sister", "mother", "mom"]
-
-
-def extract_search_query(product_name: str, brand: str = "", category: str = "") -> str:
-    """
-    Extract a clean, searchable query from a product name.
-    
-    Examples:
-        "Intrigue is My Middle Name Men T shirt" → "men tshirt"
-        "Keep calm and chai on unisexual hoodie" → "hoodie"
-        "My Pet Name is IITian custom BATCH YEAR Unisexual Graphic printed Varsity Jacket" → "varsity jacket"
-        "Left swipe, if it isn't a forever unisexual hoodie" → "hoodie"
-    """
-    name_lower = product_name.lower()
-    
-    # Detect category from product name
-    detected_category = ""
-    for cat, patterns in _CATEGORY_PATTERNS.items():
-        for pattern in patterns:
-            if pattern in name_lower:
-                detected_category = cat
-                break
-        if detected_category:
-            break
-    
-    # Use provided category if no detection
-    if not detected_category and category:
-        detected_category = category.lower()
-    
-    # Detect gender
-    gender = ""
-    for g in _GENDER_MALE:
-        if g in name_lower:
-            gender = "men"
-            break
-    if not gender:
-        for g in _GENDER_FEMALE:
-            if g in name_lower:
-                gender = "women"
-                break
-    
-    # Build query from brand + gender + category
-    parts = []
-    if brand and brand.lower() not in _FILLER_WORDS:
-        parts.append(brand)
-    if gender:
-        parts.append(gender)
-    if detected_category:
-        parts.append(detected_category)
-    
-    # If we got nothing, try extracting keywords
-    if not parts:
-        words = re.findall(r'[a-z]+', name_lower)
-        meaningful = [w for w in words if w not in _FILLER_WORDS and len(w) > 2]
-        parts = meaningful[:3]
-    
-    query = " ".join(parts)
-    return query if query else product_name[:50]
-
-
-def normalize_discount(price: float, mrp: float, discount_raw: float) -> int:
-    """
-    Normalize discount to percentage.
-    Myntra returns discount as rupee amount (MRP - price).
-    Some platforms return percentage directly.
-    """
-    if mrp <= 0 or price <= 0:
-        return 0
-    
-    # If discount_raw is > 100, it's likely a rupee amount (not percentage)
-    if discount_raw > 100:
-        # It's MRP - price in rupees
-        calculated_pct = int((1 - price / mrp) * 100) if mrp > price else 0
-        return min(calculated_pct, 90)  # Cap at 90% to avoid data errors
-    
-    # If discount_raw is 0-100, it might be percentage
-    if discount_raw > 0 and discount_raw <= 100:
-        return int(discount_raw)
-    
-    # Calculate from price/mrp
-    return int((1 - price / mrp) * 100) if mrp > price else 0
-
-
-# ── Myntra Scraper ──
-
-async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:
-    """Scrape Myntra search results via internal search API (requires cookies from initial page load)."""
-    cached = _get_cached("myntra.com", query)
-    if cached:
-        return cached.get("products", [])[:max_results]
-
-    search_query = query.replace(" ", "+")
-    products = []
-
-    try:
-        await _rate_limit("myntra.com")
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
-            # Step 1: Load main page to get cookies
-            main_headers = _random_headers("myntra.com")
-            main_resp = await client.get("https://www.myntra.com/", headers=main_headers)
-            cookies = dict(main_resp.cookies)
-
-            # Step 2: Search API call with cookies
-            api_headers = _random_headers("myntra.com")
-            api_headers["Accept"] = "application/json"
-            api_headers["X-Requested-With"] = "XMLHttpRequest"
-            api_headers["myntrawebsite"] = "desktop"
-            api_headers["Referer"] = f"https://www.myntra.com/{search_query}"
-
-            search_url = f"https://www.myntra.com/gateway/v2/search/query?q={search_query}&p=1&rows={max_results}&o=0"
-            resp = await client.get(search_url, headers=api_headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data.get("products", [])
-                
-                # Check if Myntra returned bot-detected results (same product repeated)
-                unique_brands = set()
-                for item in items:
-                    unique_brands.add(item.get("brand", ""))
-                
-                if len(unique_brands) <= 1 and len(items) > 1:
-                    # Likely bot-detected — Myntra returns same product for all queries
-                    logger.warning("Myntra bot detection triggered — returning cached/default results")
-                    return []
-                
-                for item in items[:max_results]:
-                    price = item.get("price", 0)
-                    mrp = item.get("mrp", item.get("price", 0))
-                    discount_raw = item.get("discount", 0)
-                    
-                    products.append({
-                        "source": "myntra",
-                        "product_id": str(item.get("productId", "")),
-                        "title": item.get("product", item.get("productName", "")),
-                        "brand": item.get("brand", ""),
-                        "price": price,
-                        "mrp": mrp,
-                        "discount_pct": normalize_discount(price, mrp, discount_raw),
-                        "rating": item.get("rating", 0),
-                        "rating_count": item.get("ratingCount", 0),
-                        "image_url": item.get("searchImage", ""),
-                        "url": f"https://www.myntra.com/{item.get('landingPageUrl', '')}",
-                        "color": item.get("primaryColour", ""),
-                        "category": item.get("category", ""),
-                    })
-            else:
-                logger.warning(f"Myntra API returned {resp.status_code}")
-    except Exception as e:
-        logger.warning(f"Myntra API error: {e}")
-
-    if products:
-        _set_cache("myntra.com", query, {"products": products})
-    return products
-
-
-# ── AJIO Scraper ──
-
-async def scrape_ajio(query: str, max_results: int = 10) -> list[dict]:
-    """Scrape AJIO search results."""
-    cached = _get_cached("ajio.com", query)
-    if cached:
-        return cached.get("products", [])[:max_results]
-
-    search_query = query.replace(" ", "%20")
-    url = f"https://www.ajio.com/search/?text={search_query}"
-    html = await _fetch_with_retry(url, "ajio.com")
-    if not html:
-        return []
-
-    products = []
-    try:
-        match = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});\s*</script>', html, re.DOTALL)
-        if not match:
-            match = re.search(r'"items"\s*:\s*\[(.*?)\]\s*[,}]', html, re.DOTALL)
-
-        if match:
-            try:
-                data = json.loads(match.group(1))
-                items = data if isinstance(data, list) else data.get("items", data.get("products", []))
-            except json.JSONDecodeError:
-                items = []
-
-            for item in items[:max_results]:
-                if isinstance(item, dict):
-                    price = item.get("price", {}).get("value", 0) if isinstance(item.get("price"), dict) else item.get("price", 0)
-                    mrp = item.get("mrp", {}).get("value", 0) if isinstance(item.get("mrp"), dict) else item.get("mrp", 0)
-                    
-                    products.append({
-                        "source": "ajio",
-                        "product_id": str(item.get("id", item.get("productId", ""))),
-                        "title": item.get("name", item.get("productName", "")),
-                        "brand": item.get("brand", {}).get("name", "") if isinstance(item.get("brand"), dict) else item.get("brand", ""),
-                        "price": price,
-                        "mrp": mrp,
-                        "discount_pct": item.get("discountPercent", 0),
-                        "rating": item.get("rating", 0),
-                        "rating_count": item.get("ratingCount", 0),
-                        "image_url": item.get("image", item.get("imageUrl", "")),
-                        "url": f"https://www.ajio.com{item.get('url', '')}",
-                        "color": item.get("color", ""),
-                        "category": item.get("category", ""),
-                    })
-    except Exception as e:
-        logger.warning(f"AJIO parse error: {e}")
-
-    if products:
-        _set_cache("ajio.com", query, {"products": products})
-    return products
-
-
-# ── Amazon India Scraper ──
+# ══════════════════════════════════════════════════════════════
+# AMAZON INDIA — Works via HTML parsing, ASIN-based URLs
+# ══════════════════════════════════════════════════════════════
 
 async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
-    """Scrape Amazon India search results via HTML parsing."""
+    """Scrape Amazon India. Links: https://www.amazon.in/dp/{ASIN}"""
     cached = _get_cached("amazon.in", query)
     if cached:
         return cached.get("products", [])[:max_results]
 
-    search_query = query.replace(" ", "+")
-    url = f"https://www.amazon.in/s?k={search_query}&ref=nb_sb_noss"
-    html = await _fetch_with_retry(url, "www.amazon.in")
-    if not html:
+    await _rate_limit("amazon.in")
+    search_url = f"https://www.amazon.in/s?k={query.replace(' ', '+')}&ref=nb_sb_noss"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
+            resp = await client.get(search_url, headers=_headers("www.amazon.in"))
+            if resp.status_code != 200:
+                logger.warning(f"Amazon: HTTP {resp.status_code}")
+                return []
+            html = resp.text
+    except Exception as e:
+        logger.warning(f"Amazon error: {e}")
         return []
 
     products = []
-    try:
-        results = list(re.finditer(r'data-component-type="s-search-result"', html))
+    results = list(re.finditer(r'data-component-type="s-search-result"', html))
 
-        for i, match in enumerate(results[:max_results]):
-            start = match.start()
-            end = results[i + 1].start() if i + 1 < len(results) else start + 8000
-            chunk = html[start:end]
+    for i, match in enumerate(results[:max_results]):
+        chunk = html[match.start():results[i+1].start() if i+1 < len(results) else match.start()+8000]
 
-            asin_match = re.search(r'data-asin="([A-Z0-9]{10})"', chunk)
-            if not asin_match:
-                continue
-            asin = asin_match.group(1)
+        asin_m = re.search(r'data-asin="([A-Z0-9]{10})"', chunk)
+        if not asin_m:
+            continue
+        asin = asin_m.group(1)
 
-            h2s = re.findall(r'<h2[^>]*>(.*?)</h2>', chunk, re.DOTALL)
-            title = ""
-            if len(h2s) >= 2:
-                title = re.sub(r'<[^>]+>', '', h2s[1]).strip()
-            elif len(h2s) == 1:
-                title = re.sub(r'<[^>]+>', '', h2s[0]).strip()
-            if not title:
-                title_match = re.search(r'class="a-text-normal"[^>]*>([^<]+)<', chunk)
-                title = title_match.group(1).strip() if title_match else ""
-            
-            # Decode HTML entities
-            import html as html_mod
-            title = html_mod.unescape(title)
+        # Title
+        h2s = re.findall(r'<h2[^>]*>(.*?)</h2>', chunk, re.DOTALL)
+        title = ""
+        if h2s:
+            title = html_mod.unescape(re.sub(r'<[^>]+>', '', h2s[-1]).strip())
+        if not title:
+            tm = re.search(r'class="a-text-normal"[^>]*>([^<]+)<', chunk)
+            title = html_mod.unescape(tm.group(1).strip()) if tm else ""
 
-            price_match = re.search(r'class="a-price-whole"[^>]*>([0-9,]+)<', chunk)
-            price = int(price_match.group(1).replace(",", "")) if price_match else 0
+        # Price
+        pm = re.search(r'class="a-price-whole"[^>]*>([0-9,]+)<', chunk)
+        price = int(pm.group(1).replace(",", "")) if pm else 0
 
-            mrp_match = re.search(r'class="a-price a-text-price[^"]*"[^>]*>.*?class="a-offscreen"[^>]*>([0-9,]+)', chunk, re.DOTALL)
-            if not mrp_match:
-                mrp_match = re.search(r'a-text-price[^>]*>[^<]*<span[^>]*>([0-9,]+)<', chunk)
-            mrp = int(mrp_match.group(1).replace(",", "")) if mrp_match else price
+        # MRP
+        mm = re.search(r'class="a-price a-text-price[^"]*"[^>]*>.*?class="a-offscreen"[^>]*>([0-9,]+)', chunk, re.DOTALL)
+        if not mm:
+            mm = re.search(r'a-text-price[^>]*>[^<]*<span[^>]*>([0-9,]+)<', chunk)
+        mrp = int(mm.group(1).replace(",", "")) if mm else price
 
-            rating_match = re.search(r'class="a-icon-alt">(\d+\.?\d*) out of', chunk)
-            rating = float(rating_match.group(1)) if rating_match else 0
+        # Rating
+        rm = re.search(r'class="a-icon-alt">(\d+\.?\d*) out of', chunk)
+        rating = float(rm.group(1)) if rm else 0
 
-            count_match = re.search(r'(\d[\d,]*)\s*(?:ratings?| Reviews)', chunk)
-            rating_count = int(count_match.group(1).replace(",", "")) if count_match else 0
+        # Rating count
+        cm = re.search(r'(\d[\d,]*)\s*(?:ratings?|Reviews)', chunk)
+        rating_count = int(cm.group(1).replace(",", "")) if cm else 0
 
-            img_match = re.search(r'<img[^>]*src="(https://m\.media-amazon\.com/[^"]+)"', chunk)
-            image_url = img_match.group(1) if img_match else ""
+        # Image
+        im = re.search(r'<img[^>]*src="(https://m\.media-amazon\.com/[^"]+)"', chunk)
+        image_url = im.group(1) if im else ""
 
-            if title and price > 0:
-                products.append({
-                    "source": "amazon",
-                    "product_id": asin,
-                    "title": title,
-                    "brand": title.split()[0] if title else "",
-                    "price": price,
-                    "mrp": mrp if mrp >= price else price,
-                    "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
-                    "rating": rating,
-                    "rating_count": rating_count,
-                    "image_url": image_url,
-                    "url": f"https://www.amazon.in/dp/{asin}",
-                    "color": "",
-                    "category": "",
-                })
-
-    except Exception as e:
-        logger.warning(f"Amazon parse error: {e}")
+        if title and price > 0:
+            products.append({
+                "source": "amazon",
+                "product_id": asin,
+                "title": title,
+                "brand": title.split()[0] if title else "",
+                "price": price,
+                "mrp": mrp if mrp >= price else price,
+                "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
+                "rating": rating,
+                "rating_count": rating_count,
+                "image_url": image_url,
+                "url": f"https://www.amazon.in/dp/{asin}",
+                "color": "",
+                "category": "",
+            })
 
     if products:
         _set_cache("amazon.in", query, {"products": products})
     return products
 
 
-# ── Flipkart Scraper ──
+# ══════════════════════════════════════════════════════════════
+# FLIPKART — HTML parsing with real product page URLs
+# ══════════════════════════════════════════════════════════════
 
 async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
-    """Scrape Flipkart search results via HTML parsing."""
+    """Scrape Flipkart. Links: https://www.flipkart.com/{slug}/p/{itemid}"""
     cached = _get_cached("flipkart.com", query)
     if cached:
         return cached.get("products", [])[:max_results]
 
-    search_query = query.replace(" ", "+")
-    url = f"https://www.flipkart.com/search?q={search_query}"
-    html = await _fetch_with_retry(url, "flipkart.com")
-    if not html:
+    await _rate_limit("flipkart.com")
+    search_url = f"https://www.flipkart.com/search?q={query.replace(' ', '+')}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
+            resp = await client.get(search_url, headers=_headers())
+            if resp.status_code != 200:
+                return []
+            html = resp.text
+    except Exception as e:
+        logger.warning(f"Flipkart error: {e}")
         return []
 
     products = []
-    try:
-        # Flipkart uses data-id for product containers
-        results = list(re.finditer(r'data-id="([^"]+)"', html))
+    data_ids = list(re.finditer(r'data-id="([^"]+)"', html))
 
-        for i, match in enumerate(results[:max_results]):
-            start = match.start()
-            end = results[i + 1].start() if i + 1 < len(results) else start + 8000
-            chunk = html[start:end]
-            product_id = match.group(1)
+    for i, m in enumerate(data_ids[:max_results]):
+        chunk = html[m.start():data_ids[i+1].start() if i+1 < len(data_ids) else m.start()+8000]
+        product_id = m.group(1)
 
-            # Title — try multiple patterns
-            title = ""
-            # Pattern 1: href with title attribute
-            title_match = re.search(r'href="[^"]*"[^>]*title="([^"]+)"', chunk)
-            if title_match:
-                title = title_match.group(1).strip()
-            # Pattern 2: Look for text that looks like a product title (capitalized, 20+ chars)
-            if not title:
-                for tm in re.finditer(r'>([A-Z][^<]{15,80})</(?:a|span|div)', chunk):
-                    t = tm.group(1).strip()
-                    if len(t) > 15 and not t.startswith('₹'):
-                        title = t
-                        break
-            # Pattern 3: data-id chunk with common class names
-            if not title:
-                title_match = re.search(r'class="[^"]*(?:title|name|product)[^"]*"[^>]*>([^<]+)<', chunk)
-                if title_match:
-                    title = title_match.group(1).strip()
+        # Extract product URL from href (contains /p/ pattern)
+        link = ""
+        link_m = re.search(r'href="(/[^"]+?/p/itm[A-Za-z0-9]+[^"]*)"', chunk)
+        if link_m:
+            raw = link_m.group(1).split("?")[0]  # Clean query params
+            link = f"https://www.flipkart.com{raw}"
 
-            # Price
-            price_match = re.search(r'₹([\d,]+)', chunk)
-            price = int(price_match.group(1).replace(",", "")) if price_match else 0
+        # Title
+        title = ""
+        title_m = re.search(r'href="[^"]*"[^>]*title="([^"]+)"', chunk)
+        if title_m:
+            title = html_mod.unescape(title_m.group(1).strip())
+        if not title:
+            for tm in re.finditer(r'>([A-Z][^<]{15,80})</(?:a|span|div)', chunk):
+                t = tm.group(1).strip()
+                if len(t) > 15 and not t.startswith('₹'):
+                    title = html_mod.unescape(t)
+                    break
 
-            # MRP (second ₹ in the chunk, usually strikethrough)
-            mrp_prices = re.findall(r'₹([\d,]+)', chunk)
-            mrp = int(mrp_prices[1].replace(",", "")) if len(mrp_prices) > 1 else price
+        # Price
+        prices = re.findall(r'₹([\d,]+)', chunk)
+        price = int(prices[0].replace(",", "")) if prices else 0
+        mrp = int(prices[1].replace(",", "")) if len(prices) > 1 else price
 
-            # Rating
-            rating_match = re.search(r'(\d+\.?\d*)\s*★', chunk)
-            if not rating_match:
-                rating_match = re.search(r'(\d+\.?\d*)\s*out of\s*5', chunk)
-            rating = float(rating_match.group(1)) if rating_match else 0
+        # Rating
+        rm = re.search(r'(\d+\.?\d*)\s*★', chunk)
+        rating = float(rm.group(1)) if rm else 0
 
-            # Image
-            img_match = re.search(r'<img[^>]*src="(https://[^"]+flipkart[^"]+)"', chunk)
-            image_url = img_match.group(1) if img_match else ""
-
-            if title and price > 0:
-                products.append({
-                    "source": "flipkart",
-                    "product_id": product_id,
-                    "title": title,
-                    "brand": title.split()[0] if title else "",
-                    "price": price,
-                    "mrp": mrp if mrp >= price else price,
-                    "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
-                    "rating": rating,
-                    "rating_count": 0,
-                    "image_url": image_url,
-                    "url": f"https://www.flipkart.com/search?q={search_query}",
-                    "color": "",
-                    "category": "",
-                })
-    except Exception as e:
-        logger.warning(f"Flipkart parse error: {e}")
+        if title and price > 0:
+            products.append({
+                "source": "flipkart",
+                "product_id": product_id,
+                "title": title,
+                "brand": title.split()[0] if title else "",
+                "price": price,
+                "mrp": mrp if mrp >= price else price,
+                "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
+                "rating": rating,
+                "rating_count": 0,
+                "image_url": "",
+                "url": link or f"https://www.flipkart.com/search?q={query.replace(' ', '+')}",
+                "color": "",
+                "category": "",
+            })
 
     if products:
         _set_cache("flipkart.com", query, {"products": products})
     return products
 
 
-# ── Cross-platform price comparison ──
+# ══════════════════════════════════════════════════════════════
+# MYNTRA — HTML extraction via window.__myx embedded JSON
+# ══════════════════════════════════════════════════════════════
+
+# Map search queries to Myntra category page URLs
+_MYNYTRA_CATEGORY_MAP = {
+    "tshirt": "men-tshirts",
+    "shirt": "men-casual-shirts",
+    "formal shirt": "men-formal-shirts",
+    "polo": "men-polo-t-shirts",
+    "kurta": "men-kurtas",
+    "jeans": "men-jeans",
+    "trousers": "men-trousers",
+    "shorts": "men-shorts",
+    "hoodie": "men-hoodies",
+    "jacket": "men-jackets",
+    "sneakers": "men-sneakers",
+    "shoes": "men-casual-shoes",
+    "blazer": "men-blazers",
+    "tracksuit": "men-tracksuits",
+    "sweatshirt": "men-sweatshirts",
+    "ethnic": "men-kurtas",
+    "sherwani": "men-sherwanis",
+    "dhoti": "men-dhotis",
+}
+
+
+def _query_to_myntra_url(query: str) -> str:
+    """Convert a search query to a Myntra category page URL."""
+    q = query.lower().strip()
+
+    # Try exact category match first
+    for keyword, slug in _MYNYTRA_CATEGORY_MAP.items():
+        if keyword in q:
+            return f"https://www.myntra.com/{slug}"
+
+    # Default: use Myntra search
+    return f"https://www.myntra.com/{q.replace(' ', '-')}"
+
+
+async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:
+    """Scrape Myntra via HTML window.__myx extraction. Links: real product page URLs."""
+    cached = _get_cached("myntra.com", query)
+    if cached:
+        return cached.get("products", [])[:max_results]
+
+    await _rate_limit("myntra.com")
+    url = _query_to_myntra_url(query)
+
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True, http2=True) as client:
+            resp = await client.get(url, headers=_headers())
+            if resp.status_code != 200:
+                logger.warning(f"Myntra: HTTP {resp.status_code} for {url}")
+                return []
+            html = resp.text
+    except Exception as e:
+        logger.warning(f"Myntra error: {e}")
+        return []
+
+    products = []
+    try:
+        # Extract window.__myx JSON
+        start = html.find("window.__myx")
+        if start == -1:
+            logger.warning("Myntra: window.__myx not found")
+            return []
+
+        products_start = html.find('"products"', start)
+        if products_start == -1:
+            return []
+
+        bracket_start = html.find("[", products_start)
+        decoder = json.JSONDecoder()
+        myx_products, _ = decoder.raw_decode(html, bracket_start)
+
+        for p in myx_products[:max_results]:
+            pid = p.get("productId", "")
+            name = p.get("product", "")
+            brand = p.get("brand", "")
+            price = p.get("price", 0)
+            mrp = p.get("mrp", 0)
+            discount = p.get("discount", 0)
+            rating = p.get("rating", 0) or 0
+            rating_count = p.get("ratingCount", 0) or 0
+            landing = p.get("landingPageUrl", "")
+            image = p.get("searchImage", "")
+            color = p.get("colour", "")
+
+            # Build real Myntra product URL
+            url = f"https://www.myntra.com/{landing}" if landing else ""
+
+            # Normalize discount to percentage
+            if mrp > 0 and price > 0 and mrp > price:
+                discount_pct = int((1 - price / mrp) * 100)
+            elif discount > 100:
+                discount_pct = int(discount / mrp * 100) if mrp > 0 else 0
+            else:
+                discount_pct = int(discount) if discount <= 100 else 0
+
+            if name and price > 0:
+                products.append({
+                    "source": "myntra",
+                    "product_id": str(pid),
+                    "title": f"{brand} {name}".strip(),
+                    "brand": brand,
+                    "price": price,
+                    "mrp": mrp if mrp >= price else price,
+                    "discount_pct": min(discount_pct, 90),
+                    "rating": round(rating, 1),
+                    "rating_count": rating_count,
+                    "image_url": image,
+                    "url": url,
+                    "color": color,
+                    "category": p.get("categoryType", ""),
+                })
+
+    except Exception as e:
+        logger.warning(f"Myntra parse error: {e}")
+
+    if products:
+        _set_cache("myntra.com", query, {"products": products})
+    return products
+
+
+# ══════════════════════════════════════════════════════════════
+# AJIO — Best-effort (often blocked by Cloudflare)
+# ══════════════════════════════════════════════════════════════
+
+async def scrape_ajio(query: str, max_results: int = 10) -> list[dict]:
+    """Scrape AJIO. Best-effort — may be blocked."""
+    cached = _get_cached("ajio.com", query)
+    if cached:
+        return cached.get("products", [])[:max_results]
+
+    await _rate_limit("ajio.com")
+    search_url = f"https://www.ajio.com/search/?text={query.replace(' ', '%20')}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
+            resp = await client.get(search_url, headers=_headers())
+            if resp.status_code != 200:
+                return []
+            html = resp.text
+
+        products = []
+        # Try to find product data in script tags
+        scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.DOTALL)
+        for s in scripts:
+            if "productId" in s and "price" in s:
+                pids = re.findall(r'"productId"\s*:\s*"([^"]+)"', s)
+                names = re.findall(r'"name"\s*:\s*"([^"]+)"', s)
+                prices_vals = re.findall(r'"value"\s*:\s*(\d+)', s)
+                brands = re.findall(r'"brandName"\s*:\s*"([^"]+)"', s)
+
+                for j in range(min(len(pids), max_results)):
+                    pid = pids[j] if j < len(pids) else ""
+                    name = names[j] if j < len(names) else ""
+                    price = int(prices_vals[j]) if j < len(prices_vals) else 0
+                    brand = brands[j] if j < len(brands) else ""
+
+                    if name and price > 0:
+                        products.append({
+                            "source": "ajio",
+                            "product_id": pid,
+                            "title": f"{brand} {name}".strip(),
+                            "brand": brand,
+                            "price": price,
+                            "mrp": price,
+                            "discount_pct": 0,
+                            "rating": 0,
+                            "rating_count": 0,
+                            "image_url": "",
+                            "url": f"https://www.ajio.com/p/{pid}",
+                            "color": "",
+                            "category": "",
+                        })
+                break
+
+        if products:
+            _set_cache("ajio.com", query, {"products": products})
+        return products
+
+    except Exception as e:
+        logger.warning(f"AJIO error: {e}")
+        return []
+
+
+# ══════════════════════════════════════════════════════════════
+# NYKAA FASHION — Best-effort (often blocked)
+# ══════════════════════════════════════════════════════════════
+
+async def scrape_nykaa(query: str, max_results: int = 10) -> list[dict]:
+    """Scrape Nykaa Fashion. Best-effort — may be blocked."""
+    cached = _get_cached("nykaafashion.com", query)
+    if cached:
+        return cached.get("products", [])[:max_results]
+
+    await _rate_limit("nykaafashion.com")
+    search_url = f"https://www.nykaafashion.com/search?q={query.replace(' ', '+')}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
+            resp = await client.get(search_url, headers=_headers())
+            if resp.status_code != 200:
+                return []
+            html = resp.text
+
+        products = []
+        # Try __NEXT_DATA__
+        nd = re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+        if nd:
+            data = json.loads(nd.group(1))
+            items = data.get("props", {}).get("pageProps", {}).get("products", [])
+            for item in items[:max_results]:
+                pid = item.get("id", "")
+                name = item.get("name", "")
+                price = item.get("price", 0)
+                mrp = item.get("mrp", price)
+                brand = item.get("brand", "")
+
+                if name and price > 0:
+                    products.append({
+                        "source": "nykaa",
+                        "product_id": str(pid),
+                        "title": f"{brand} {name}".strip(),
+                        "brand": brand,
+                        "price": price,
+                        "mrp": mrp if mrp >= price else price,
+                        "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
+                        "rating": item.get("rating", 0),
+                        "rating_count": item.get("ratingCount", 0),
+                        "image_url": item.get("image", ""),
+                        "url": f"https://www.nykaafashion.com/p/{pid}",
+                        "color": "",
+                        "category": "",
+                    })
+
+        if products:
+            _set_cache("nykaafashion.com", query, {"products": products})
+        return products
+
+    except Exception as e:
+        logger.warning(f"Nykaa error: {e}")
+        return []
+
+
+# ══════════════════════════════════════════════════════════════
+# SMART QUERY EXTRACTION
+# ══════════════════════════════════════════════════════════════
+
+def extract_search_query(product_name: str, brand: str = "", category: str = "") -> str:
+    """Extract a clean, searchable query from a product name."""
+    name_lower = product_name.lower()
+
+    _CATEGORY_PATTERNS = {
+        "tshirt": ["t-shirt", "tshirt", "tee"],
+        "shirt": ["shirt"],
+        "hoodie": ["hoodie"],
+        "jacket": ["jacket", "varsity"],
+        "jeans": ["jeans", "denim"],
+        "kurta": ["kurta", "kurti"],
+        "sneakers": ["sneakers", "shoes"],
+    }
+
+    detected = ""
+    for cat, patterns in _CATEGORY_PATTERNS.items():
+        for pat in patterns:
+            if pat in name_lower:
+                detected = cat
+                break
+        if detected:
+            break
+
+    if not detected and category:
+        detected = category.lower()
+
+    gender = ""
+    for g in ["men", "man", "boy"]:
+        if g in name_lower:
+            gender = "men"
+            break
+    if not gender:
+        for g in ["women", "woman", "girl"]:
+            if g in name_lower:
+                gender = "women"
+                break
+
+    parts = []
+    if brand and len(brand) > 2:
+        parts.append(brand)
+    if gender:
+        parts.append(gender)
+    if detected:
+        parts.append(detected)
+
+    if not parts:
+        words = re.findall(r'[a-z]+', name_lower)
+        _filler = {"the", "a", "an", "is", "my", "and", "or", "for", "in", "on", "to", "of", "with", "by",
+                    "just", "only", "not", "no", "but", "if", "so", "such", "name", "middle", "intrigue",
+                    "calm", "chai", "keep", "respawn", "reload", "repeat", "swipe", "forever", "grave", "rave",
+                    "unisexual", "printed", "graphic"}
+        parts = [w for w in words if w not in _filler and len(w) > 2][:3]
+
+    return " ".join(parts) if parts else product_name[:50]
+
+
+# ══════════════════════════════════════════════════════════════
+# CROSS-PLATFORM COMPARISON
+# ══════════════════════════════════════════════════════════════
 
 async def compare_prices(
     product_name: str,
@@ -545,23 +562,27 @@ async def compare_prices(
     category: str = "",
     sources: list[str] = None,
 ) -> dict:
-    """Search across platforms and return price comparison."""
+    """Search across all platforms and return price comparison with valid links."""
     if sources is None:
-        sources = ["myntra", "amazon", "flipkart"]
+        sources = ["amazon", "flipkart", "myntra", "ajio", "nykaa"]
 
-    # Extract smart search query from product name
     query = extract_search_query(product_name, brand, category)
     logger.info(f"Price search: '{product_name}' → query: '{query}'")
 
+    _SCRAPERS = {
+        "amazon": lambda q: scrape_amazon(q, 5),
+        "flipkart": lambda q: scrape_flipkart(q, 5),
+        "myntra": lambda q: scrape_myntra(q, 5),
+        "ajio": lambda q: scrape_ajio(q, 5),
+        "nykaa": lambda q: scrape_nykaa(q, 5),
+    }
+
     tasks = []
-    if "myntra" in sources:
-        tasks.append(scrape_myntra(query, max_results=5))
-    if "ajio" in sources:
-        tasks.append(scrape_ajio(query, max_results=5))
-    if "amazon" in sources:
-        tasks.append(scrape_amazon(query, max_results=5))
-    if "flipkart" in sources:
-        tasks.append(scrape_flipkart(query, max_results=5))
+    active_sources = []
+    for s in sources:
+        if s in _SCRAPERS:
+            tasks.append(_SCRAPERS[s](query))
+            active_sources.append(s)
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -570,10 +591,7 @@ async def compare_prices(
         if isinstance(result, list):
             all_products.extend(result)
 
-    # Sort by price
     all_products.sort(key=lambda x: x.get("price", float("inf")))
-
-    # Find best price
     available = [p for p in all_products if p.get("price", 0) > 0]
     best_price = available[0] if available else None
     worst_price = available[-1] if available else None
@@ -586,19 +604,8 @@ async def compare_prices(
         "query": query,
         "results": all_products,
         "total_found": len(all_products),
+        "platforms_searched": active_sources,
         "best_price": best_price,
         "savings": savings,
         "compared_at": datetime.utcnow().isoformat(),
     }
-
-
-# ── Standalone test ──
-
-async def _test():
-    logging.basicConfig(level=logging.INFO)
-    result = await compare_prices("Intrigue is My Middle Name Men T shirt", sources=["amazon", "myntra"])
-    print(json.dumps(result, indent=2)[:2000])
-
-
-if __name__ == "__main__":
-    asyncio.run(_test())

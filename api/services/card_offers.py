@@ -49,6 +49,14 @@ CARD_OFFERS: dict[str, list[dict]] = {
         {"bank": "ICICI", "card_type": "credit", "discount_pct": 10, "max_discount": 750, "min_order": 2999, "code": "ICICI10", "valid_until": "2026-08-15", "terms": "ICICI Credit Card. Excl. EMI."},
         {"bank": "SBI", "card_type": "credit", "discount_pct": 10, "max_discount": 500, "min_order": 1999, "code": "SBI10", "valid_until": "2026-07-31", "terms": "SBI Credit Card. Min ₹1999."},
     ],
+
+    # ── Nykaa Fashion ──
+    "nykaa": [
+        {"bank": "HDFC", "card_type": "credit", "discount_pct": 10, "max_discount": 500, "min_order": 1999, "code": "HDFC10", "valid_until": "2026-08-31", "terms": "HDFC Credit Card. Min ₹1999."},
+        {"bank": "ICICI", "card_type": "credit", "discount_pct": 10, "max_discount": 500, "min_order": 1999, "code": "ICICI10", "valid_until": "2026-08-15", "terms": "ICICI Credit Card. No EMI."},
+        {"bank": "SBI", "card_type": "credit", "discount_pct": 5, "max_discount": 250, "min_order": 1499, "code": "SBI5", "valid_until": "2026-07-31", "terms": "SBI Credit Card. Min ₹1499."},
+        {"bank": "Axis", "card_type": "credit", "discount_pct": 10, "max_discount": 500, "min_order": 1999, "code": "AXIS10", "valid_until": "2026-09-30", "terms": "Axis Bank Credit Card."},
+    ],
 }
 
 
