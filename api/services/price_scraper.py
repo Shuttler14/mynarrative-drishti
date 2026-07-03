@@ -29,7 +29,7 @@ _USER_AGENTS = [
 _cache: dict[str, tuple[float, dict]] = {}
 CACHE_TTL = 86400
 _last_request: dict[str, float] = {}
-MIN_DELAY = 2.5
+MIN_DELAY = 0.8
 
 
 def _cache_key(domain: str, query: str) -> str:
@@ -53,7 +53,7 @@ def _set_cache(domain: str, query: str, data: dict):
 async def _rate_limit(domain: str):
     now = time.time()
     last = _last_request.get(domain, 0)
-    wait = MIN_DELAY - (now - last) + random.uniform(0.5, 1.5)
+    wait = MIN_DELAY - (now - last) + random.uniform(0.1, 0.5)
     if wait > 0:
         await asyncio.sleep(wait)
     _last_request[domain] = time.time()
@@ -99,6 +99,11 @@ async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
             html = resp.text
     except Exception as e:
         logger.warning(f"Amazon error: {e}")
+        return []
+
+    # Bot detection — page too small
+    if len(html) < 5000:
+        logger.warning(f"Amazon: bot detection (len={len(html)})")
         return []
 
     products = []
@@ -170,7 +175,7 @@ async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
 # ══════════════════════════════════════════════════════════════
 
 async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
-    """Scrape Flipkart. Links: https://www.flipkart.com/{slug}/p/{itemid}"""
+    """Scrape Flipkart via __INITIAL_STATE__ JSON or HTML fallback."""
     cached = _get_cached("flipkart.com", query)
     if cached:
         return cached.get("products", [])[:max_results]
@@ -182,67 +187,147 @@ async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True, http2=True) as client:
             resp = await client.get(search_url, headers=_headers())
             if resp.status_code != 200:
+                logger.warning(f"Flipkart: HTTP {resp.status_code}")
                 return []
             html = resp.text
     except Exception as e:
         logger.warning(f"Flipkart error: {e}")
         return []
 
+    # Bot detection — page is too small
+    if len(html) < 5000:
+        logger.warning(f"Flipkart: bot detection (len={len(html)})")
+        return []
+
     products = []
-    data_ids = list(re.finditer(r'data-id="([^"]+)"', html))
 
-    for i, m in enumerate(data_ids[:max_results]):
-        chunk = html[m.start():data_ids[i+1].start() if i+1 < len(data_ids) else m.start()+8000]
-        product_id = m.group(1)
+    # Strategy 1: Parse __INITIAL_STATE__ JSON
+    try:
+        m = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.+)', html, re.DOTALL)
+        if m:
+            raw = m.group(1)
+            # Find the end of the JSON — look for }; or </script>
+            end_markers = [';\n', ';\r', ';</script>', ';\nwindow.']
+            best_end = len(raw)
+            for marker in end_markers:
+                idx = raw.find(marker)
+                if idx > 0 and idx < best_end:
+                    best_end = idx
+            raw = raw[:best_end]
 
-        # Extract product URL from href (contains /p/ pattern)
-        link = ""
-        link_m = re.search(r'href="(/[^"]+?/p/itm[A-Za-z0-9]+[^"]*)"', chunk)
-        if link_m:
-            raw = link_m.group(1).split("?")[0]  # Clean query params
-            link = f"https://www.flipkart.com{raw}"
+            state = json.loads(raw)
+            page_data = state.get("pageDataV4", {}).get("page", {}).get("data", {})
+            for key, val in page_data.items():
+                if not isinstance(val, list):
+                    continue
+                for item in val:
+                    if not isinstance(item, dict):
+                        continue
+                    pi = item.get("productInfo", {}).get("value", {})
+                    if not pi:
+                        continue
 
-        # Title
-        title = ""
-        title_m = re.search(r'href="[^"]*"[^>]*title="([^"]+)"', chunk)
-        if title_m:
-            title = html_mod.unescape(title_m.group(1).strip())
-        if not title:
-            for tm in re.finditer(r'>([A-Z][^<]{15,80})</(?:a|span|div)', chunk):
-                t = tm.group(1).strip()
-                if len(t) > 15 and not t.startswith('₹'):
-                    title = html_mod.unescape(t)
-                    break
+                    titles = pi.get("titles", {})
+                    pricing = pi.get("pricing", {})
+                    prices_list = pricing.get("prices", [])
+                    base_url = pi.get("baseUrl", "")
+                    pid = pi.get("id", "")
 
-        # Price
-        prices = re.findall(r'₹([\d,]+)', chunk)
-        price = int(prices[0].replace(",", "")) if prices else 0
-        mrp = int(prices[1].replace(",", "")) if len(prices) > 1 else price
+                    title = titles.get("title") or titles.get("newTitle", "")
+                    brand = titles.get("superTitle", "")
+                    category = pi.get("analyticsData", {}).get("subCategory", "")
 
-        # Rating
-        rm = re.search(r'(\d+\.?\d*)\s*★', chunk)
-        rating = float(rm.group(1)) if rm else 0
+                    selling_price = 0
+                    mrp = 0
+                    for p in prices_list:
+                        if p.get("priceType") == "SPECIAL_PRICE":
+                            selling_price = int(p.get("value", 0))
+                        elif p.get("priceType") == "FSP":
+                            mrp = int(p.get("value", 0))
+                    if not selling_price and prices_list:
+                        selling_price = int(prices_list[-1].get("value", 0))
+                    if not mrp:
+                        mrp = selling_price
+                    discount_pct = pricing.get("totalDiscount", 0)
 
-        if title and price > 0:
-            products.append({
-                "source": "flipkart",
-                "product_id": product_id,
-                "title": title,
-                "brand": title.split()[0] if title else "",
-                "price": price,
-                "mrp": mrp if mrp >= price else price,
-                "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
-                "rating": rating,
-                "rating_count": 0,
-                "image_url": "",
-                "url": link or f"https://www.flipkart.com/search?q={query.replace(' ', '+')}",
-                "color": "",
-                "category": "",
-            })
+                    images = pi.get("media", {}).get("images", [])
+                    image_url = ""
+                    if images:
+                        raw_img = images[0].get("url", "")
+                        image_url = raw_img.replace("{@width}", "300").replace("{@height}", "300").replace("{@quality}", "70")
+
+                    link = f"https://www.flipkart.com{base_url.split('?')[0]}" if base_url else ""
+
+                    if title and selling_price > 0:
+                        products.append({
+                            "source": "flipkart",
+                            "product_id": pid,
+                            "title": f"{brand} {title}".strip() if brand else title,
+                            "brand": brand,
+                            "price": selling_price,
+                            "mrp": mrp if mrp >= selling_price else selling_price,
+                            "discount_pct": min(discount_pct, 90),
+                            "rating": 0,
+                            "rating_count": 0,
+                            "image_url": image_url,
+                            "url": link or search_url,
+                            "color": "",
+                            "category": category,
+                        })
+    except Exception as e:
+        logger.warning(f"Flipkart JSON parse error: {e}")
+
+    # Strategy 2: Fallback to HTML data-id extraction
+    if not products:
+        data_ids = list(re.finditer(r'data-id="([^"]+)"', html))
+        for i, m in enumerate(data_ids[:max_results]):
+            chunk = html[m.start():data_ids[i+1].start() if i+1 < len(data_ids) else m.start()+8000]
+            product_id = m.group(1)
+
+            link = ""
+            link_m = re.search(r'href="(/[^"]+?/p/itm[A-Za-z0-9]+[^"]*)"', chunk)
+            if link_m:
+                raw = link_m.group(1).split("?")[0]
+                link = f"https://www.flipkart.com{raw}"
+
+            title = ""
+            title_m = re.search(r'href="[^"]*"[^>]*title="([^"]+)"', chunk)
+            if title_m:
+                title = html_mod.unescape(title_m.group(1).strip())
+            if not title:
+                for tm in re.finditer(r'>([A-Z][^<]{15,80})</(?:a|span|div)', chunk):
+                    t = tm.group(1).strip()
+                    if len(t) > 15 and not t.startswith('₹'):
+                        title = html_mod.unescape(t)
+                        break
+
+            prices = re.findall(r'₹([\d,]+)', chunk)
+            price = int(prices[0].replace(",", "")) if prices else 0
+            mrp = int(prices[1].replace(",", "")) if len(prices) > 1 else price
+
+            rm = re.search(r'(\d+\.?\d*)\s*★', chunk)
+            rating = float(rm.group(1)) if rm else 0
+
+            if title and price > 0:
+                products.append({
+                    "source": "flipkart",
+                    "product_id": product_id,
+                    "title": title,
+                    "brand": title.split()[0] if title else "",
+                    "price": price,
+                    "mrp": mrp if mrp >= price else price,
+                    "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
+                    "rating": rating,
+                    "rating_count": 0,
+                    "image_url": "",
+                    "url": link or search_url,
+                    "color": "",
+                    "category": "",
+                })
 
     if products:
         _set_cache("flipkart.com", query, {"products": products})
-    return products
+    return products[:max_results]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -303,6 +388,11 @@ async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:
             html = resp.text
     except Exception as e:
         logger.warning(f"Myntra error: {e}")
+        return []
+
+    # Bot detection — page too small
+    if len(html) < 5000:
+        logger.warning(f"Myntra: bot detection (len={len(html)})")
         return []
 
     products = []
@@ -577,19 +667,20 @@ async def compare_prices(
         "nykaa": lambda q: scrape_nykaa(q, 5),
     }
 
-    tasks = []
+    # Run scrapers sequentially to avoid rate limiting conflicts
+    all_products = []
     active_sources = []
     for s in sources:
         if s in _SCRAPERS:
-            tasks.append(_SCRAPERS[s](query))
-            active_sources.append(s)
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    all_products = []
-    for result in results:
-        if isinstance(result, list):
-            all_products.extend(result)
+            try:
+                result = await asyncio.wait_for(_SCRAPERS[s](query), timeout=20)
+                if isinstance(result, list) and result:
+                    all_products.extend(result)
+                    active_sources.append(s)
+            except asyncio.TimeoutError:
+                logger.warning(f"Scraper {s} timed out")
+            except Exception as e:
+                logger.warning(f"Scraper {s} failed: {e}")
 
     all_products.sort(key=lambda x: x.get("price", float("inf")))
     available = [p for p in all_products if p.get("price", 0) > 0]
