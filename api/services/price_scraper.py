@@ -1,5 +1,5 @@
 """
-Cross-platform price comparison — Amazon, Flipkart, Myntra, AJIO, Nykaa.
+Cross-platform price comparison — SerpApi Google Shopping + fallback scrapers.
 All links are verified product page URLs.
 """
 import asyncio
@@ -8,6 +8,7 @@ import html as html_mod
 import json
 import logging
 import math
+import os
 import random
 import re
 import time
@@ -17,6 +18,8 @@ from typing import Optional
 import httpx
 
 logger = logging.getLogger("drishti.pricing")
+
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -75,6 +78,100 @@ async def _fetch_with_retry(url: str, headers: dict, max_retries: int = 1, timeo
             else:
                 logger.warning(f"Fetch failed: {url} — {e}")
     return None
+
+
+# ══════════════════════════════════════════════════════════════
+# GOOGLE SHOPPING VIA SERPAPI — Primary price comparison
+# ══════════════════════════════════════════════════════════════
+
+async def search_google_shopping(query: str, max_results: int = 10) -> list[dict]:
+    """Search Google Shopping via SerpApi. Returns products with prices from all platforms."""
+    if not SERPAPI_KEY:
+        logger.warning("SerpApi key not configured")
+        return []
+
+    cached = _get_cached("google_shopping", query)
+    if cached:
+        return cached.get("products", [])[:max_results]
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get("https://serpapi.com/search", params={
+                "engine": "google_shopping",
+                "q": query,
+                "gl": "in",
+                "hl": "en",
+                "api_key": SERPAPI_KEY,
+            })
+            if r.status_code != 200:
+                logger.warning(f"SerpApi: HTTP {r.status_code}")
+                return []
+            data = r.json()
+    except Exception as e:
+        logger.warning(f"SerpApi error: {e}")
+        return []
+
+    products = []
+    for item in data.get("shopping_results", [])[:max_results]:
+        title = item.get("title", "")
+        price_str = item.get("price", "")
+        extracted_price = item.get("extracted_price", 0)
+        source = item.get("source", "")
+        link = item.get("link", "")
+        rating = item.get("rating", 0) or 0
+        reviews = item.get("reviews", 0) or 0
+        thumbnail = item.get("thumbnail", "")
+        old_price = item.get("old_price", "")
+        extracted_old = item.get("extracted_old_price", 0) or extracted_price
+
+        # Skip if no price
+        if not extracted_price or extracted_price <= 0:
+            continue
+
+        # Determine platform from source
+        platform = "unknown"
+        source_lower = source.lower()
+        if "amazon" in source_lower:
+            platform = "amazon"
+        elif "flipkart" in source_lower:
+            platform = "flipkart"
+        elif "myntra" in source_lower:
+            platform = "myntra"
+        elif "ajio" in source_lower:
+            platform = "ajio"
+        elif "nykaa" in source_lower:
+            platform = "nykaa"
+        elif "meesho" in source_lower:
+            platform = "meesho"
+        elif "jiomart" in source_lower:
+            platform = "jiomart"
+
+        # Clean link — remove tracking params
+        clean_link = link.split("?")[0] if link else ""
+
+        mrp = int(extracted_old) if extracted_old and extracted_old > extracted_price else int(extracted_price)
+        discount_pct = int((1 - extracted_price / mrp) * 100) if mrp > extracted_price else 0
+
+        products.append({
+            "source": platform,
+            "product_id": item.get("product_id", ""),
+            "title": title,
+            "brand": title.split()[0] if title else "",
+            "price": int(extracted_price),
+            "mrp": mrp,
+            "discount_pct": min(discount_pct, 90),
+            "rating": round(rating, 1),
+            "rating_count": reviews,
+            "image_url": thumbnail,
+            "url": clean_link or link,
+            "color": "",
+            "category": "",
+            "seller": source,
+        })
+
+    if products:
+        _set_cache("google_shopping", query, {"products": products})
+    return products
 
 
 def _headers(domain: str = "") -> dict:
@@ -619,51 +716,40 @@ async def compare_prices(
     category: str = "",
     sources: list[str] = None,
 ) -> dict:
-    """Search across all platforms and return price comparison with valid links."""
+    """Search across all platforms. Google Shopping primary, scrapers fallback."""
     if sources is None:
         sources = ["amazon", "flipkart", "myntra", "ajio", "nykaa"]
 
     query = extract_search_query(product_name, brand, category)
     logger.info(f"Price search: '{product_name}' → query: '{query}'")
 
-    _SCRAPERS = {
-        "amazon": lambda q: scrape_amazon(q, 5),
-        "flipkart": lambda q: scrape_flipkart(q, 5),
-        "myntra": lambda q: scrape_myntra(q, 5),
-        "ajio": lambda q: scrape_ajio(q, 5),
-        "nykaa": lambda q: scrape_nykaa(q, 5),
-    }
-
-    # Run main scrapers in parallel for speed, best-effort ones sequentially
     all_products = []
     active_sources = []
 
-    # Parallel: Amazon + Flipkart + Myntra (the 3 that work)
-    main_tasks = []
-    main_names = []
-    for s in ["amazon", "flipkart", "myntra"]:
-        if s in _SCRAPERS:
-            main_tasks.append(_SCRAPERS[s](query))
-            main_names.append(s)
+    # PRIMARY: Google Shopping via SerpApi (covers all platforms in one call)
+    gs_products = await search_google_shopping(query, 15)
+    if gs_products:
+        all_products.extend(gs_products)
+        platforms = set(p["source"] for p in gs_products if p["source"] != "unknown")
+        active_sources.extend(platforms)
+        logger.info(f"Google Shopping: {len(gs_products)} products from {platforms}")
 
-    main_results = await asyncio.gather(*main_tasks, return_exceptions=True)
-    for name, result in zip(main_names, main_results):
-        if isinstance(result, list) and result:
-            all_products.extend(result)
-            active_sources.append(name)
-        elif isinstance(result, Exception):
-            logger.warning(f"Scraper {name} failed: {result}")
-
-    # Sequential: AJIO + Nykaa (best-effort, often blocked)
-    for s in ["ajio", "nykaa"]:
-        if s in _SCRAPERS:
-            try:
-                result = await asyncio.wait_for(_SCRAPERS[s](query), timeout=10)
+    # FALLBACK: Direct scrapers for platforms missing from Google Shopping
+    missing_platforms = [s for s in ["amazon", "flipkart", "myntra"] if s not in active_sources]
+    if missing_platforms:
+        _SCRAPERS = {
+            "amazon": lambda q: scrape_amazon(q, 5),
+            "flipkart": lambda q: scrape_flipkart(q, 5),
+            "myntra": lambda q: scrape_myntra(q, 5),
+        }
+        fallback_tasks = [_SCRAPERS[s](query) for s in missing_platforms if s in _SCRAPERS]
+        if fallback_tasks:
+            results = await asyncio.gather(*fallback_tasks, return_exceptions=True)
+            for name, result in zip(missing_platforms, results):
                 if isinstance(result, list) and result:
                     all_products.extend(result)
-                    active_sources.append(s)
-            except (asyncio.TimeoutError, Exception) as e:
-                logger.warning(f"Scraper {s} skipped: {e}")
+                    active_sources.append(name)
+                    logger.info(f"Fallback {name}: {len(result)} products")
 
     all_products.sort(key=lambda x: x.get("price", float("inf")))
     available = [p for p in all_products if p.get("price", 0) > 0]
