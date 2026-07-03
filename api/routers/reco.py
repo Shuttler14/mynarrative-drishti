@@ -100,6 +100,9 @@ async def recommend_outfits(
         )
         
         if result.get("recommendations"):
+            # Add aliases for frontend compatibility
+            result["outfits"] = result["recommendations"]
+            result["products"] = result["recommendations"]
             return result
             
     except Exception as e:

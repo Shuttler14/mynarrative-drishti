@@ -166,26 +166,34 @@ async def search_marketplace_products(
     
     logger.info(f"Marketplace search queries: {queries}")
     
-    # Search all platforms in parallel for each query
+    # PRIMARY: Use Google Shopping for fast, multi-platform results
     all_products = []
     seen_ids = set()
     
-    for query in queries[:3]:  # Top 3 queries to avoid rate limiting
-        tasks = [
-            scrape_amazon(query, max_results=max_per_platform),
-            scrape_myntra(query, max_results=max_per_platform),
-            scrape_flipkart(query, max_results=max_per_platform),
-        ]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for result in results:
-            if isinstance(result, list):
-                for product in result:
-                    pid = f"{product['source']}:{product['product_id']}"
-                    if pid not in seen_ids:
-                        seen_ids.add(pid)
-                        all_products.append(product)
+    from api.services.price_scraper import search_google_shopping
+    for query in queries[:2]:  # Top 2 queries
+        gs_products = await search_google_shopping(query, 10)
+        for product in gs_products:
+            pid = f"{product['source']}:{product['product_id']}"
+            if pid not in seen_ids:
+                seen_ids.add(pid)
+                all_products.append(product)
+    
+    # FALLBACK: If Google Shopping returned nothing, use individual scrapers
+    if not all_products:
+        for query in queries[:2]:
+            tasks = [
+                scrape_amazon(query, max_results=5),
+                scrape_flipkart(query, max_results=5),
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, list):
+                    for product in result:
+                        pid = f"{product['source']}:{product['product_id']}"
+                        if pid not in seen_ids:
+                            seen_ids.add(pid)
+                            all_products.append(product)
     
     # Sort by relevance score (rating + review count as proxy)
     for p in all_products:
