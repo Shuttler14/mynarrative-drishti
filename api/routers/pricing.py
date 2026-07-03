@@ -57,7 +57,7 @@ async def compare_prices(
             product_name=product_name,
             brand=brand,
             category=category,
-            sources=["myntra", "ajio", "amazon"],
+            sources=["amazon", "myntra", "flipkart"],
         )
     except Exception as e:
         logger.error(f"Scraping failed: {e}")

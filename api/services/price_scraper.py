@@ -124,6 +124,122 @@ async def _fetch_with_retry(url: str, domain: str, max_retries: int = 3) -> Opti
     return None
 
 
+# ── Smart Query Extraction ──
+
+# Common filler words to remove from product names
+_FILLER_WORDS = {
+    "the", "a", "an", "is", "my", "your", "and", "or", "for", "in", "on", "at",
+    "to", "of", "with", "by", "from", "this", "that", "it", "be", "as", "was",
+    "are", "been", "being", "have", "has", "had", "do", "does", "did", "will",
+    "would", "could", "should", "may", "might", "can", "shall", "just", "only",
+    "not", "no", "nor", "but", "if", "then", "than", "too", "very", "so",
+    "such", "same", "other", "another", "each", "every", "all", "both", "few",
+    "more", "most", "some", "any", "none", "name", "middle", "intrigue",
+    "calm", "chai", "keep", "respawn", "reload", "repeat", "swipe", "forever",
+    "grave", "rave", "till", "pet", "custom", "batch", "year", "unisexual",
+    "printed", "graphic", "men", "women", "boy", "girl", "guy", "lady",
+}
+
+# Category detection patterns
+_CATEGORY_PATTERNS = {
+    "tshirt": ["t-shirt", "tshirt", "tee", "tees"],
+    "shirt": ["shirt", "shirts", "casual shirt", "formal shirt"],
+    "hoodie": ["hoodie", "hoodies", "pullover"],
+    "jacket": ["jacket", "jackets", "varsity", "bomber", "windcheater"],
+    "jeans": ["jeans", "denim", "pants", "trousers"],
+    "shorts": ["shorts"],
+    "kurta": ["kurta", "kurti", "kurtas"],
+    "saree": ["saree", "sari"],
+    "dress": ["dress", "frock", "gown"],
+    "sneakers": ["sneakers", "shoes", "trainers"],
+    "accessories": ["scarf", "watch", "belt", "bag", "hat", "cap", "sunglasses"],
+}
+
+# Gender detection
+_GENDER_MALE = ["men", "man", "boy", "guys", "male", "husband", "brother", "father", "dad"]
+_GENDER_FEMALE = ["women", "woman", "girl", "ladies", "female", "wife", "sister", "mother", "mom"]
+
+
+def extract_search_query(product_name: str, brand: str = "", category: str = "") -> str:
+    """
+    Extract a clean, searchable query from a product name.
+    
+    Examples:
+        "Intrigue is My Middle Name Men T shirt" → "men tshirt"
+        "Keep calm and chai on unisexual hoodie" → "hoodie"
+        "My Pet Name is IITian custom BATCH YEAR Unisexual Graphic printed Varsity Jacket" → "varsity jacket"
+        "Left swipe, if it isn't a forever unisexual hoodie" → "hoodie"
+    """
+    name_lower = product_name.lower()
+    
+    # Detect category from product name
+    detected_category = ""
+    for cat, patterns in _CATEGORY_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in name_lower:
+                detected_category = cat
+                break
+        if detected_category:
+            break
+    
+    # Use provided category if no detection
+    if not detected_category and category:
+        detected_category = category.lower()
+    
+    # Detect gender
+    gender = ""
+    for g in _GENDER_MALE:
+        if g in name_lower:
+            gender = "men"
+            break
+    if not gender:
+        for g in _GENDER_FEMALE:
+            if g in name_lower:
+                gender = "women"
+                break
+    
+    # Build query from brand + gender + category
+    parts = []
+    if brand and brand.lower() not in _FILLER_WORDS:
+        parts.append(brand)
+    if gender:
+        parts.append(gender)
+    if detected_category:
+        parts.append(detected_category)
+    
+    # If we got nothing, try extracting keywords
+    if not parts:
+        words = re.findall(r'[a-z]+', name_lower)
+        meaningful = [w for w in words if w not in _FILLER_WORDS and len(w) > 2]
+        parts = meaningful[:3]
+    
+    query = " ".join(parts)
+    return query if query else product_name[:50]
+
+
+def normalize_discount(price: float, mrp: float, discount_raw: float) -> int:
+    """
+    Normalize discount to percentage.
+    Myntra returns discount as rupee amount (MRP - price).
+    Some platforms return percentage directly.
+    """
+    if mrp <= 0 or price <= 0:
+        return 0
+    
+    # If discount_raw is > 100, it's likely a rupee amount (not percentage)
+    if discount_raw > 100:
+        # It's MRP - price in rupees
+        calculated_pct = int((1 - price / mrp) * 100) if mrp > price else 0
+        return min(calculated_pct, 90)  # Cap at 90% to avoid data errors
+    
+    # If discount_raw is 0-100, it might be percentage
+    if discount_raw > 0 and discount_raw <= 100:
+        return int(discount_raw)
+    
+    # Calculate from price/mrp
+    return int((1 - price / mrp) * 100) if mrp > price else 0
+
+
 # ── Myntra Scraper ──
 
 async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:
@@ -155,15 +271,30 @@ async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:
             if resp.status_code == 200:
                 data = resp.json()
                 items = data.get("products", [])
+                
+                # Check if Myntra returned bot-detected results (same product repeated)
+                unique_brands = set()
+                for item in items:
+                    unique_brands.add(item.get("brand", ""))
+                
+                if len(unique_brands) <= 1 and len(items) > 1:
+                    # Likely bot-detected — Myntra returns same product for all queries
+                    logger.warning("Myntra bot detection triggered — returning cached/default results")
+                    return []
+                
                 for item in items[:max_results]:
+                    price = item.get("price", 0)
+                    mrp = item.get("mrp", item.get("price", 0))
+                    discount_raw = item.get("discount", 0)
+                    
                     products.append({
                         "source": "myntra",
                         "product_id": str(item.get("productId", "")),
                         "title": item.get("product", item.get("productName", "")),
                         "brand": item.get("brand", ""),
-                        "price": item.get("price", 0),
-                        "mrp": item.get("mrp", item.get("price", 0)),
-                        "discount_pct": item.get("discount", 0),
+                        "price": price,
+                        "mrp": mrp,
+                        "discount_pct": normalize_discount(price, mrp, discount_raw),
                         "rating": item.get("rating", 0),
                         "rating_count": item.get("ratingCount", 0),
                         "image_url": item.get("searchImage", ""),
@@ -189,7 +320,6 @@ async def scrape_ajio(query: str, max_results: int = 10) -> list[dict]:
     if cached:
         return cached.get("products", [])[:max_results]
 
-    # AJIO uses an internal API
     search_query = query.replace(" ", "%20")
     url = f"https://www.ajio.com/search/?text={search_query}"
     html = await _fetch_with_retry(url, "ajio.com")
@@ -198,7 +328,6 @@ async def scrape_ajio(query: str, max_results: int = 10) -> list[dict]:
 
     products = []
     try:
-        # AJIO embeds product data in script tags
         match = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});\s*</script>', html, re.DOTALL)
         if not match:
             match = re.search(r'"items"\s*:\s*\[(.*?)\]\s*[,}]', html, re.DOTALL)
@@ -212,13 +341,16 @@ async def scrape_ajio(query: str, max_results: int = 10) -> list[dict]:
 
             for item in items[:max_results]:
                 if isinstance(item, dict):
+                    price = item.get("price", {}).get("value", 0) if isinstance(item.get("price"), dict) else item.get("price", 0)
+                    mrp = item.get("mrp", {}).get("value", 0) if isinstance(item.get("mrp"), dict) else item.get("mrp", 0)
+                    
                     products.append({
                         "source": "ajio",
                         "product_id": str(item.get("id", item.get("productId", ""))),
                         "title": item.get("name", item.get("productName", "")),
                         "brand": item.get("brand", {}).get("name", "") if isinstance(item.get("brand"), dict) else item.get("brand", ""),
-                        "price": item.get("price", {}).get("value", 0) if isinstance(item.get("price"), dict) else item.get("price", 0),
-                        "mrp": item.get("mrp", {}).get("value", 0) if isinstance(item.get("mrp"), dict) else item.get("mrp", 0),
+                        "price": price,
+                        "mrp": mrp,
                         "discount_pct": item.get("discountPercent", 0),
                         "rating": item.get("rating", 0),
                         "rating_count": item.get("ratingCount", 0),
@@ -251,7 +383,6 @@ async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
 
     products = []
     try:
-        # Find all s-search-result containers
         results = list(re.finditer(r'data-component-type="s-search-result"', html))
 
         for i, match in enumerate(results[:max_results]):
@@ -259,13 +390,11 @@ async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
             end = results[i + 1].start() if i + 1 < len(results) else start + 8000
             chunk = html[start:end]
 
-            # ASIN
             asin_match = re.search(r'data-asin="([A-Z0-9]{10})"', chunk)
             if not asin_match:
                 continue
             asin = asin_match.group(1)
 
-            # Title (second h2 in the chunk contains the full product name)
             h2s = re.findall(r'<h2[^>]*>(.*?)</h2>', chunk, re.DOTALL)
             title = ""
             if len(h2s) >= 2:
@@ -275,26 +404,25 @@ async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
             if not title:
                 title_match = re.search(r'class="a-text-normal"[^>]*>([^<]+)<', chunk)
                 title = title_match.group(1).strip() if title_match else ""
+            
+            # Decode HTML entities
+            import html as html_mod
+            title = html_mod.unescape(title)
 
-            # Price
             price_match = re.search(r'class="a-price-whole"[^>]*>([0-9,]+)<', chunk)
             price = int(price_match.group(1).replace(",", "")) if price_match else 0
 
-            # MRP
             mrp_match = re.search(r'class="a-price a-text-price[^"]*"[^>]*>.*?class="a-offscreen"[^>]*>([0-9,]+)', chunk, re.DOTALL)
             if not mrp_match:
                 mrp_match = re.search(r'a-text-price[^>]*>[^<]*<span[^>]*>([0-9,]+)<', chunk)
             mrp = int(mrp_match.group(1).replace(",", "")) if mrp_match else price
 
-            # Rating
             rating_match = re.search(r'class="a-icon-alt">(\d+\.?\d*) out of', chunk)
             rating = float(rating_match.group(1)) if rating_match else 0
 
-            # Rating count
             count_match = re.search(r'(\d[\d,]*)\s*(?:ratings?| Reviews)', chunk)
             rating_count = int(count_match.group(1).replace(",", "")) if count_match else 0
 
-            # Image
             img_match = re.search(r'<img[^>]*src="(https://m\.media-amazon\.com/[^"]+)"', chunk)
             image_url = img_match.group(1) if img_match else ""
 
@@ -323,6 +451,75 @@ async def scrape_amazon(query: str, max_results: int = 10) -> list[dict]:
     return products
 
 
+# ── Flipkart Scraper ──
+
+async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
+    """Scrape Flipkart search results via HTML parsing."""
+    cached = _get_cached("flipkart.com", query)
+    if cached:
+        return cached.get("products", [])[:max_results]
+
+    search_query = query.replace(" ", "+")
+    url = f"https://www.flipkart.com/search?q={search_query}"
+    html = await _fetch_with_retry(url, "flipkart.com")
+    if not html:
+        return []
+
+    products = []
+    try:
+        # Flipkart uses data-id for product containers
+        results = list(re.finditer(r'data-id="([^"]+)"', html))
+
+        for i, match in enumerate(results[:max_results]):
+            start = match.start()
+            end = results[i + 1].start() if i + 1 < len(results) else start + 8000
+            chunk = html[start:end]
+            product_id = match.group(1)
+
+            # Title
+            title_match = re.search(r'class="_1WtVRc"[^>]*>(.*?)</a>', chunk, re.DOTALL)
+            if not title_match:
+                title_match = re.search(r'class="IRpwTa"[^>]*>(.*?)</a>', chunk, re.DOTALL)
+            title = re.sub(r'<[^>]+>', '', title_match.group(1)).strip() if title_match else ""
+
+            # Price
+            price_match = re.search(r'class="_1WtVRc"[^>]*>.*?₹([\d,]+)', chunk, re.DOTALL)
+            if not price_match:
+                price_match = re.search(r'₹([\d,]+)', chunk)
+            price = int(price_match.group(1).replace(",", "")) if price_match else 0
+
+            # MRP
+            mrp_match = re.search(r'class="_3I9_wc"[^>]*>₹([\d,]+)', chunk)
+            mrp = int(mrp_match.group(1).replace(",", "")) if mrp_match else price
+
+            # Rating
+            rating_match = re.search(r'(\d+\.?\d*)\s*★', chunk)
+            rating = float(rating_match.group(1)) if rating_match else 0
+
+            if title and price > 0:
+                products.append({
+                    "source": "flipkart",
+                    "product_id": product_id,
+                    "title": title,
+                    "brand": title.split()[0] if title else "",
+                    "price": price,
+                    "mrp": mrp if mrp >= price else price,
+                    "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
+                    "rating": rating,
+                    "rating_count": 0,
+                    "image_url": "",
+                    "url": f"https://www.flipkart.com/product/{product_id}",
+                    "color": "",
+                    "category": "",
+                })
+    except Exception as e:
+        logger.warning(f"Flipkart parse error: {e}")
+
+    if products:
+        _set_cache("flipkart.com", query, {"products": products})
+    return products
+
+
 # ── Cross-platform price comparison ──
 
 async def compare_prices(
@@ -333,9 +530,11 @@ async def compare_prices(
 ) -> dict:
     """Search across platforms and return price comparison."""
     if sources is None:
-        sources = ["myntra", "ajio", "amazon"]
+        sources = ["myntra", "amazon", "flipkart"]
 
-    query = f"{brand} {product_name}".strip() if brand else product_name
+    # Extract smart search query from product name
+    query = extract_search_query(product_name, brand, category)
+    logger.info(f"Price search: '{product_name}' → query: '{query}'")
 
     tasks = []
     if "myntra" in sources:
@@ -344,6 +543,8 @@ async def compare_prices(
         tasks.append(scrape_ajio(query, max_results=5))
     if "amazon" in sources:
         tasks.append(scrape_amazon(query, max_results=5))
+    if "flipkart" in sources:
+        tasks.append(scrape_flipkart(query, max_results=5))
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -378,8 +579,8 @@ async def compare_prices(
 
 async def _test():
     logging.basicConfig(level=logging.INFO)
-    result = await compare_prices("narrative tshirt", sources=["myntra"])
-    print(json.dumps(result, indent=2)[:1000])
+    result = await compare_prices("Intrigue is My Middle Name Men T shirt", sources=["amazon", "myntra"])
+    print(json.dumps(result, indent=2)[:2000])
 
 
 if __name__ == "__main__":
