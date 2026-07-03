@@ -77,121 +77,99 @@ async def recommend_outfits(
     authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Recommend products based on user preferences using vector search."""
+    """Recommend products from ALL marketplaces (Amazon, Myntra, Flipkart) based on user preferences."""
     user_id = None
     if authorization:
         payload = verify_token(authorization.replace("Bearer ", ""))
         if payload:
             user_id = payload["sub"]
 
-    user = None
-    if user_id:
-        user = await db.get(User, user_id)
+    # ── PRIMARY: Search marketplaces directly ──
+    try:
+        from api.services.marketplace_reco import get_marketplace_recommendations
+        
+        result = await get_marketplace_recommendations(
+            occasion=req.occasion or "",
+            style=req.style or "",
+            gender=req.gender or "",
+            body_profile=req.body_profile or {},
+            weather=req.weather or {},
+            price_segment=req.price_segment or "",
+            city=req.city or "",
+            count=req.count or 12,
+        )
+        
+        if result.get("recommendations"):
+            return result
+            
+    except Exception as e:
+        logger.error(f"Marketplace search failed, falling back to Qdrant: {e}")
 
-    # Build search query from preferences
-    style = req.style or "casual"
-    occasion = req.occasion or ""
-    budget = req.budget_max or 5000
+    # ── FALLBACK: Search from Shopify catalog via Qdrant ──
+    try:
+        from api.services.catalog_sync import search_similar, generate_embedding
 
-    # v4.0: Apply price segment budget mapping
-    PRICE_RANGES = {
-        "budget": (0, 1500),
-        "mid": (1500, 5000),
-        "premium": (5000, 15000),
-        "luxury": (15000, 999999),
-    }
-    if req.price_segment and req.price_segment in PRICE_RANGES:
-        lo, hi = PRICE_RANGES[req.price_segment]
-        budget = min(budget, hi) if budget else hi
+        style = req.style or "casual"
+        occasion = req.occasion or ""
+        gender_label = ""
+        if req.gender:
+            gender_label = " for women" if req.gender == "female" else " for men"
 
-    # v4.0: Gender-aware query
-    gender_label = ""
-    if req.gender:
-        gender_label = " for women" if req.gender == "female" else " for men"
+        query_text = f"{style} clothing{gender_label}"
+        if occasion:
+            query_text += f" for {occasion}"
 
-    query_text = f"{style} clothing{gender_label}"
-    if occasion:
-        query_text += f" for {occasion}"
-
-    # v4.0: Brand filter tags
-    brand_filter = [b.lower() for b in req.brands] if req.brands else []
-
-    # Try vector search first
-    client = _get_qdrant()
-    if client:
+        client = None
         try:
-            from api.services.catalog_sync import search_similar, generate_embedding
+            from api.services.catalog_sync import get_qdrant_client, COLLECTION_NAME
+            client = get_qdrant_client()
+            collections = client.get_collections().collections
+            if COLLECTION_NAME not in [c.name for c in collections]:
+                client = None
+        except Exception:
+            client = None
 
+        if client:
             embedding = generate_embedding(query_text)
             if embedding:
                 results = search_similar(client, embedding, limit=req.count * 2)
+                
+                PRICE_RANGES = {"budget": 1500, "mid": 5000, "premium": 15000, "luxury": 999999}
+                budget = PRICE_RANGES.get(req.price_segment, 5000) if req.price_segment else 5000
+                brand_filter = [b.lower() for b in req.brands] if req.brands else []
 
-                # Filter by budget, brand, and format
                 recommendations = []
                 for r in results:
                     price = r.get("price", 0)
-                    title_lower = (r.get("title", "") or "").lower()
-                    brand_vendor = (r.get("vendor", "") or "").lower()
-
                     if price > budget:
                         continue
-
-                    # v4.0: Brand filter — skip if brands selected and product doesn't match
                     if brand_filter:
-                        matches_brand = any(b in title_lower or b in brand_vendor for b in brand_filter)
-                        if not matches_brand:
+                        title_lower = (r.get("title", "") or "").lower()
+                        brand_vendor = (r.get("vendor", "") or "").lower()
+                        if not any(b in title_lower or b in brand_vendor for b in brand_filter):
                             continue
-
-                    recommendations.append(
-                        ProductRecommendation(
-                            product_id=r.get("shopify_id", ""),
-                            title=r.get("title", ""),
-                            category=r.get("category", ""),
-                            price=price,
-                            currency=r.get("currency", "INR"),
-                            image_url=r.get("image_url", ""),
-                            url=r.get("url", ""),
-                            score=r.get("score", 0),
-                            reason=f"Matches your {style} style" + (f" from {', '.join(req.brands)}" if req.brands else ""),
-                        ).model_dump()
-                    )
-
+                    recommendations.append({
+                        "product_id": r.get("shopify_id", ""),
+                        "title": r.get("title", ""),
+                        "category": r.get("category", ""),
+                        "price": price,
+                        "currency": r.get("currency", "INR"),
+                        "image_url": r.get("image_url", ""),
+                        "url": r.get("url", ""),
+                        "score": r.get("score", 0),
+                        "source": "shopify",
+                        "reason": f"Matches your {style} style",
+                    })
                     if len(recommendations) >= req.count:
                         break
 
                 if recommendations:
                     return {"recommendations": recommendations, "count": len(recommendations), "source": "vector_search"}
 
-        except Exception as e:
-            logger.error(f"Vector search failed: {e}")
-
-    # Fallback: query from database (if products are stored there)
-    try:
-        from api.models.schema import Product
-        stmt = select(Product).limit(req.count)
-        result = await db.execute(stmt)
-        products = result.scalars().all()
-
-        if products:
-            recommendations = [
-                ProductRecommendation(
-                    product_id=str(p.id),
-                    title=p.name or "Product",
-                    category=p.source or "other",
-                    price=p.price or 0,
-                    image_url=p.image_url if hasattr(p, 'image_url') else None,
-                    score=0.5,
-                    reason="From catalog",
-                ).model_dump()
-                for p in products
-                if (p.price or 0) <= budget
-            ]
-            return {"recommendations": recommendations, "count": len(recommendations), "source": "database"}
-
     except Exception as e:
-        logger.error(f"Database query failed: {e}")
+        logger.error(f"Qdrant fallback failed: {e}")
 
-    # Final fallback: empty
+    # ── FINAL FALLBACK: Empty ──
     return {"recommendations": [], "count": 0, "source": "none"}
 
 
