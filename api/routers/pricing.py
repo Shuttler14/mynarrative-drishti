@@ -64,7 +64,6 @@ async def compare_prices(
         )
     except Exception as e:
         logger.error(f"Scraping failed: {e}")
-        # Fallback: return local catalog data only
         comparison = {"query": product_name, "results": [], "total_found": 0, "best_price": None, "savings": 0}
 
     # Add local Shopify data if available
