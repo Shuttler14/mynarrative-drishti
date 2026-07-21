@@ -20,28 +20,28 @@ logger = logging.getLogger("drishti.reco.marketplace")
 
 # ── Occasion → clothing category mapping ──
 _OCCASION_CATEGORIES = {
-    "casual": ["tshirt men", "casual shirt men", "jeans men"],
-    "casual brunch": ["casual shirt men", "polo tshirt men"],
-    "work": ["formal shirt men", "formal trousers men"],
-    "office": ["formal shirt men", "blazer men"],
-    "wedding": ["kurta men", "nehru jacket men"],
-    "party": ["party shirt men", "blazer men"],
-    "date": ["shirt men", "jeans men"],
-    "gym": ["gym tshirt men", "track pants men"],
-    "beach": ["beach shorts men", "flip flops men"],
-    "festival": ["kurta men", "ethnic jacket men"],
-    "interview": ["formal shirt men", "formal shoes men"],
-    "travel": ["tshirt men", "travel jeans men"],
-    "college": ["tshirt men", "jeans men casual"],
-    "outing": ["tshirt men", "casual shirt men"],
-    "brunch": ["casual shirt men", "chinos men"],
-    "dinner": ["formal shirt men", "trousers men"],
-    "concert": ["oversized tshirt men", "streetwear men"],
-    "sport": ["sports tshirt men", "shorts men"],
-    "festive": ["kurta men", "ethnic wear men"],
-    "puja": ["kurta men traditional"],
-    "haldi": ["yellow kurta men"],
-    "sangeet": ["sherwani men", "nehru jacket men"],
+    "casual": ["tshirt", "casual shirt", "jeans"],
+    "casual brunch": ["casual shirt", "polo tshirt"],
+    "work": ["formal shirt", "formal trousers"],
+    "office": ["formal shirt", "blazer"],
+    "wedding": ["kurta", "nehru jacket"],
+    "party": ["party shirt", "blazer"],
+    "date": ["shirt", "jeans"],
+    "gym": ["gym tshirt", "track pants"],
+    "beach": ["beach shorts", "flip flops"],
+    "festival": ["kurta", "ethnic jacket"],
+    "interview": ["formal shirt", "formal shoes"],
+    "travel": ["tshirt", "travel jeans"],
+    "college": ["tshirt", "jeans casual"],
+    "outing": ["tshirt", "casual shirt"],
+    "brunch": ["casual shirt", "chinos"],
+    "dinner": ["formal shirt", "trousers"],
+    "concert": ["oversized tshirt", "streetwear"],
+    "sport": ["sports tshirt", "shorts"],
+    "festive": ["kurta", "ethnic wear"],
+    "puja": ["kurta traditional"],
+    "haldi": ["yellow kurta"],
+    "sangeet": ["sherwani", "lehenga"],
 }
 
 # ── Style → search keyword mapping ──
@@ -109,16 +109,19 @@ def _build_search_queries(
     """
     queries = []
     
-    # Get occasion categories (already include "men" suffix)
+    # Map gender to search suffix
+    gender_suffix = _GENDER_QUERY.get(gender.lower(), "") if gender else ""
+    
+    # Get occasion categories (no longer gender-hardcoded)
     occ_lower = occasion.lower() if occasion else "casual"
-    categories = _OCCASION_CATEGORIES.get(occ_lower, ["tshirt men", "casual shirt men"])
+    categories = _OCCASION_CATEGORIES.get(occ_lower, ["tshirt", "casual shirt"])
     
     # Get weather fabric
     fabric_kws = _WEATHER_FABRIC.get(weather_condition.lower(), []) if weather_condition else []
     
     # Build queries for each category
     for cat in categories[:3]:  # Max 3 queries
-        parts = [cat]
+        parts = [cat, gender_suffix]
         
         # Add style modifier if not already in the category
         if style and style.lower() not in cat.lower():
@@ -215,15 +218,25 @@ def _format_product_for_reco(product: dict) -> dict:
     source = product.get("source", "")
     product_id = product.get("product_id", "")
     
-    # Build the right URL based on source
-    if source == "amazon":
-        url = f"https://www.amazon.in/dp/{product_id}"
-    elif source == "myntra":
-        url = product.get("url", "")
-    elif source == "flipkart":
-        url = product.get("url", "")
-    else:
-        url = product.get("url", "")
+    # Always prefer the actual URL from the scraper (direct product link)
+    url = product.get("url", "")
+    # Fallback: construct marketplace search URL so user can find the product
+    if not url or "google.com/search" in url:
+        from urllib.parse import quote_plus
+        title = product.get("title", "")
+        query = quote_plus(title)
+        if source == "amazon":
+            url = f"https://www.amazon.in/s?k={query}"
+        elif source == "flipkart":
+            url = f"https://www.flipkart.com/search?q={query}"
+        elif source == "myntra":
+            url = f"https://www.myntra.com/{query}"
+        elif source == "ajio":
+            url = f"https://www.ajio.com/search/?text={query}"
+        elif source == "nykaaman" or source == "nykaa":
+            url = f"https://www.nykaaman.com/search?q={query}"
+        else:
+            url = f"https://www.google.com/search?q={query}"
     
     return {
         "product_id": product_id,

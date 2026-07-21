@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -35,21 +36,12 @@ app = FastAPI(
 # --- Rate limiting + logging (added FIRST — innermost) ---
 from api.middleware.rate_limit import RateLimitMiddleware, RequestLoggingMiddleware
 app.add_middleware(RequestLoggingMiddleware)
-app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
+app.add_middleware(RateLimitMiddleware, max_requests=int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "100")), window_seconds=int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
 
 # --- CORS (MUST be last add_middleware — outermost wrapper) ---
-CORS_ALLOWED = [
-    "https://mynarrative.in",
-    "https://www.mynarrative.in",
-    "https://mynarrative.store",
-    "https://www.mynarrative.store",
-    "https://jjdk0v-0c.myshopify.com",
-    "http://localhost:3000",
-    "http://localhost:8080",
-]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ALLOWED,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

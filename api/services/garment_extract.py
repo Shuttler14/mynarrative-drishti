@@ -28,15 +28,22 @@ from PIL import Image
 logger = logging.getLogger("drishti.garment")
 
 REPLICATE_API = "https://api.replicate.com/v1"
-REPLICATE_REMBG_VERSION = "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003"
 
 
 def _get_token() -> str:
     return os.getenv("REPLICATE_API_TOKEN", "")
 
 
+def _get_rembg_version() -> str:
+    return os.getenv("REPLICATE_REMBG_VERSION", "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003")
+
+
 async def _replicate_remove_bg(image_url: str) -> Optional[str]:
-    """Use Replicate's rembg model to remove background. Returns output URL."""
+    """Use Replicate's rembg model to remove background. Returns output URL.
+    
+    Downloads image first and sends as base64 data URI to avoid DNS issues
+    with marketplace CDNs (e.g. Flipkart's rukminim2.flikt.com).
+    """
     token = _get_token()
     if not token:
         logger.error("REPLICATE_API_TOKEN not set")
@@ -47,10 +54,30 @@ async def _replicate_remove_bg(image_url: str) -> Optional[str]:
         "Content-Type": "application/json",
     }
 
+    # Download image first and convert to data URI (avoids CDN DNS issues)
+    image_input = image_url
+    try:
+        img_bytes = await download_image(image_url)
+        import base64
+        b64 = base64.b64encode(img_bytes).decode()
+        # Detect content type from bytes
+        if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+            ct = "image/png"
+        elif img_bytes[:3] == b'\xff\xd8\xff':
+            ct = "image/jpeg"
+        elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+            ct = "image/webp"
+        else:
+            ct = "image/jpeg"
+        image_input = f"data:{ct};base64,{b64}"
+        logger.info(f"Downloaded image ({len(img_bytes)} bytes) for rembg")
+    except Exception as e:
+        logger.warning(f"Failed to download image for rembg, passing URL directly: {e}")
+
     payload = {
-        "version": REPLICATE_REMBG_VERSION,
+        "version": _get_rembg_version(),
         "input": {
-            "image": image_url,
+            "image": image_input,
         },
     }
 

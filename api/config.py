@@ -49,6 +49,7 @@ class Settings(BaseSettings):
         "https://www.mynarrative.in",
         "https://mynarrative.store",
         "https://www.mynarrative.store",
+        "https://jjdk0v-0c.myshopify.com",
         "http://localhost:3000",
         "http://localhost:8080",
     ]
@@ -68,8 +69,19 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
 
-    SCRAPING_RATE_LIMIT: int = 2
+    # Replicate model versions (configurable, not hardcoded)
+    REPLICATE_REMBG_VERSION: str = os.getenv("REPLICATE_REMBG_VERSION", "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003")
+    REPLICATE_VTON_VERSION: str = os.getenv("REPLICATE_VTON_VERSION", "0e122964dd5d7fce695da14e9206f8dd48c0c5595ecb7e3cf1a4078701fb2665")
+    REPLICATE_LLaVA_VERSION: str = os.getenv("REPLICATE_LLaVA_VERSION", "80537f9eead1a5bfa72d5ac6ea6414379be41d4d4f6679fd776e9535d1eb58bb")
+    REPLICATE_BLIP_VERSION: str = os.getenv("REPLICATE_BLIP_VERSION", "2e1dddc8621f72175f6da606e92dd76f1e24e0350828f98568c8b672e8e6583d")
+    REPLICATE_FACE_BOUNDS_VERSION: str = os.getenv("REPLICATE_FACE_BOUNDS_VERSION", "913307a91a6c2850c0433b9c0a4ea12eb298e2a86e0e0bcbe6b334e8d78b1ea6")
+    REPLICATE_COLOR_VERSION: str = os.getenv("REPLICATE_COLOR_VERSION", "3cd834532d85b3295a382a3c15625376e4bd728f8a48e06e395a78a05f42e006")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+    SCRAPING_RATE_LIMIT: int = int(os.getenv("SCRAPING_RATE_LIMIT", "2"))
     SCRAPING_PROXY_URL: str = os.getenv("SCRAPING_PROXY_URL", "")
+    SCRAPING_CACHE_TTL: int = int(os.getenv("SCRAPING_CACHE_TTL", "86400"))
+    SCRAPING_MIN_DELAY: float = float(os.getenv("SCRAPING_MIN_DELAY", "0.5"))
 
     @model_validator(mode="after")
     def _fail_closed_on_secrets(self) -> "Settings":

@@ -30,9 +30,10 @@ _USER_AGENTS = [
 ]
 
 _cache: dict[str, tuple[float, dict]] = {}
-CACHE_TTL = 86400
+# Configurable via env vars, with sensible defaults
+CACHE_TTL = int(os.getenv("SCRAPING_CACHE_TTL", "86400"))  # 24 hours
 _last_request: dict[str, float] = {}
-MIN_DELAY = 0.5
+MIN_DELAY = float(os.getenv("SCRAPING_MIN_DELAY", "0.5"))
 
 
 def _cache_key(domain: str, query: str) -> str:
@@ -117,7 +118,7 @@ async def search_google_shopping(query: str, max_results: int = 10) -> list[dict
         price_str = item.get("price", "")
         extracted_price = item.get("extracted_price", 0)
         source = item.get("source", "")
-        link = item.get("link", "")
+        link = item.get("link", "") or item.get("product_link", "")
         rating = item.get("rating", 0) or 0
         reviews = item.get("reviews", 0) or 0
         thumbnail = item.get("thumbnail", "")
@@ -425,35 +426,77 @@ async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
 # MYNTRA — HTML extraction via window.__myx embedded JSON
 # ══════════════════════════════════════════════════════════════
 
-# Map search queries to Myntra category page URLs
-_MYNYTRA_CATEGORY_MAP = {
-    "tshirt": "men-tshirts",
-    "shirt": "men-casual-shirts",
-    "formal shirt": "men-formal-shirts",
-    "polo": "men-polo-t-shirts",
-    "kurta": "men-kurtas",
-    "jeans": "men-jeans",
-    "trousers": "men-trousers",
-    "shorts": "men-shorts",
-    "hoodie": "men-hoodies",
-    "jacket": "men-jackets",
-    "sneakers": "men-sneakers",
-    "shoes": "men-casual-shoes",
-    "blazer": "men-blazers",
-    "tracksuit": "men-tracksuits",
-    "sweatshirt": "men-sweatshirts",
-    "ethnic": "men-kurtas",
-    "sherwani": "men-sherwanis",
-    "dhoti": "men-dhotis",
+# Map search queries to Myntra category page URLs (gender-aware)
+_MYNYTRA_CATEGORIES = {
+    "men": {
+        "tshirt": "men-tshirts",
+        "shirt": "men-casual-shirts",
+        "formal shirt": "men-formal-shirts",
+        "polo": "men-polo-t-shirts",
+        "kurta": "men-kurtas",
+        "jeans": "men-jeans",
+        "trousers": "men-trousers",
+        "shorts": "men-shorts",
+        "hoodie": "men-hoodies",
+        "jacket": "men-jackets",
+        "sneakers": "men-sneakers",
+        "shoes": "men-casual-shoes",
+        "blazer": "men-blazers",
+        "tracksuit": "men-tracksuits",
+        "sweatshirt": "men-sweatshirts",
+        "ethnic": "men-kurtas",
+        "sherwani": "men-sherwanis",
+        "dhoti": "men-dhotis",
+    },
+    "women": {
+        "tshirt": "women-tshirts",
+        "top": "women-tops",
+        "shirt": "women-casual-shirts",
+        "kurta": "women-kurtas",
+        "saree": "sarees",
+        "lehenga": "lehenga-choli",
+        "dress": "women-dresses",
+        "jeans": "women-jeans",
+        "trousers": "women-trousers",
+        "shorts": "women-shorts",
+        "jacket": "women-jackets",
+        "sneakers": "women-sneakers",
+        "shoes": "women-heeled-sandals",
+        "heels": "women-heeled-sandals",
+        "flat": "women-flats",
+        "ethnic": "women-kurtas",
+        "palazzo": "women-palazzos",
+        "leggings": "women-leggings",
+        "dupatta": "women-dupattas",
+        "ghagra": "women-ghagra",
+    },
+}
+
+# Detect gender from query text
+_GENDER_KEYWORDS = {
+    "men": ["men", "man", "boy", "male", "husband", "brother", "father", "dad"],
+    "women": ["women", "woman", "girl", "female", "wife", "sister", "mother", "mom", "lady", "ladies"],
 }
 
 
+def _detect_gender_from_query(query: str) -> str:
+    """Detect gender from query text. Returns 'men' or 'women'."""
+    q = query.lower()
+    for gender, keywords in _GENDER_KEYWORDS.items():
+        for kw in keywords:
+            if f" {kw} " in f" {q} ":
+                return gender
+    return "men"  # Default fallback
+
+
 def _query_to_myntra_url(query: str) -> str:
-    """Convert a search query to a Myntra category page URL."""
+    """Convert a search query to a Myntra category page URL (gender-aware)."""
     q = query.lower().strip()
+    gender = _detect_gender_from_query(q)
+    categories = _MYNYTRA_CATEGORIES.get(gender, _MYNYTRA_CATEGORIES["men"])
 
     # Try exact category match first
-    for keyword, slug in _MYNYTRA_CATEGORY_MAP.items():
+    for keyword, slug in categories.items():
         if keyword in q:
             return f"https://www.myntra.com/{slug}"
 
@@ -650,18 +693,36 @@ async def scrape_nykaa(query: str, max_results: int = 10) -> list[dict]:
 # SMART QUERY EXTRACTION
 # ══════════════════════════════════════════════════════════════
 
-def extract_search_query(product_name: str, brand: str = "", category: str = "") -> str:
-    """Extract a clean, searchable query from a product name."""
+def extract_search_query(product_name: str, brand: str = "", category: str = "", gender: str = "") -> str:
+    """Extract a clean, searchable query from a product name.
+    
+    Args:
+        product_name: Full product name/title
+        brand: Brand name (optional)
+        category: Category hint (optional)
+        gender: Gender hint ('men'/'women', optional). Used if not detectable from name.
+    """
     name_lower = product_name.lower()
 
     _CATEGORY_PATTERNS = {
         "tshirt": ["t-shirt", "tshirt", "tee"],
-        "shirt": ["shirt"],
+        "shirt": ["shirt", "blouse"],
         "hoodie": ["hoodie"],
-        "jacket": ["jacket", "varsity"],
+        "jacket": ["jacket", "varsity", "blazer"],
         "jeans": ["jeans", "denim"],
         "kurta": ["kurta", "kurti"],
+        "saree": ["saree", "sari"],
+        "lehenga": ["lehenga", "lehnga"],
+        "dress": ["dress", "gown", "frock"],
         "sneakers": ["sneakers", "shoes"],
+        "heels": ["heels", "heels", "pumps"],
+        "palazzo": ["palazzo"],
+        "leggings": ["leggings", "churidar"],
+        "dupatta": ["dupatta"],
+        "top": ["top", "camisole"],
+        "trousers": ["trousers", "pants", "chinos"],
+        "shorts": ["shorts"],
+        "ethnic": ["ethnic", "traditional"],
     }
 
     detected = ""
@@ -676,22 +737,36 @@ def extract_search_query(product_name: str, brand: str = "", category: str = "")
     if not detected and category:
         detected = category.lower()
 
-    gender = ""
-    for g in ["men", "man", "boy"]:
+    # Detect gender from product name
+    detected_gender = ""
+    for g in ["women", "woman", "girl", "ladies", "lady", "female"]:
         if g in name_lower:
-            gender = "men"
+            detected_gender = "women"
             break
-    if not gender:
-        for g in ["women", "woman", "girl"]:
+    if not detected_gender:
+        for g in ["men", "man", "boy", "male"]:
             if g in name_lower:
-                gender = "women"
+                detected_gender = "men"
                 break
 
+    # Use provided gender if not detected from name
+    if not detected_gender and gender:
+        detected_gender = gender.lower()
+
+    # Detect occasion from product name
+    occasion = ""
+    for occ in ["wedding", "party", "casual", "formal", "festive", "work", "office"]:
+        if occ in name_lower:
+            occasion = occ
+            break
+
     parts = []
-    if brand and len(brand) > 2:
+    if brand and len(brand) > 2 and brand.lower() not in ("the", "a", "an"):
         parts.append(brand)
-    if gender:
-        parts.append(gender)
+    if detected_gender:
+        parts.append(detected_gender)
+    if occasion:
+        parts.append(occasion)
     if detected:
         parts.append(detected)
 
@@ -700,8 +775,9 @@ def extract_search_query(product_name: str, brand: str = "", category: str = "")
         _filler = {"the", "a", "an", "is", "my", "and", "or", "for", "in", "on", "to", "of", "with", "by",
                     "just", "only", "not", "no", "but", "if", "so", "such", "name", "middle", "intrigue",
                     "calm", "chai", "keep", "respawn", "reload", "repeat", "swipe", "forever", "grave", "rave",
-                    "unisexual", "printed", "graphic"}
-        parts = [w for w in words if w not in _filler and len(w) > 2][:3]
+                    "unisexual", "printed", "graphic", "solid", "regular", "fit", "slim", "relaxed",
+                    "original", "combo", "pack", "set", "new"}
+        parts = [w for w in words if w not in _filler and len(w) > 2][:4]
 
     return " ".join(parts) if parts else product_name[:50]
 
@@ -714,13 +790,14 @@ async def compare_prices(
     product_name: str,
     brand: str = "",
     category: str = "",
+    gender: str = "",
     sources: list[str] = None,
 ) -> dict:
     """Search across all platforms. Google Shopping primary, scrapers fallback."""
     if sources is None:
         sources = ["amazon", "flipkart", "myntra", "ajio", "nykaa"]
 
-    query = extract_search_query(product_name, brand, category)
+    query = extract_search_query(product_name, brand, category, gender=gender)
     logger.info(f"Price search: '{product_name}' → query: '{query}'")
 
     all_products = []

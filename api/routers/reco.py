@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
@@ -116,7 +117,9 @@ async def recommend_outfits(
         occasion = req.occasion or ""
         gender_label = ""
         if req.gender:
-            gender_label = " for women" if req.gender == "female" else " for men"
+            gender_term = "women" if req.gender == "female" else "men" if req.gender == "male" else ""
+            if gender_term:
+                gender_label = f" for {gender_term}"
 
         query_text = f"{style} clothing{gender_label}"
         if occasion:
@@ -137,8 +140,14 @@ async def recommend_outfits(
             if embedding:
                 results = search_similar(client, embedding, limit=req.count * 2)
                 
-                PRICE_RANGES = {"budget": 1500, "mid": 5000, "premium": 15000, "luxury": 999999}
-                budget = PRICE_RANGES.get(req.price_segment, 5000) if req.price_segment else 5000
+                # Configurable price tiers (INR)
+                price_ranges = {
+                    "budget": int(os.getenv("PRICE_TIER_BUDGET", "1500")),
+                    "mid": int(os.getenv("PRICE_TIER_MID", "5000")),
+                    "premium": int(os.getenv("PRICE_TIER_PREMIUM", "15000")),
+                    "luxury": int(os.getenv("PRICE_TIER_LUXURY", "999999")),
+                }
+                budget = price_ranges.get(req.price_segment, 5000) if req.price_segment else 5000
                 brand_filter = [b.lower() for b in req.brands] if req.brands else []
 
                 recommendations = []

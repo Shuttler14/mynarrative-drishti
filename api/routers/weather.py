@@ -44,12 +44,8 @@ _WEATHER_ICONS = {
 async def get_current_weather(req: WeatherRequest):
     api_key = os.getenv("OPENWEATHERMAP_API_KEY", "")
     if not api_key:
-        return WeatherResponse(
-            city=req.city, country=req.country or "IN",
-            temp_c=28.0, feels_like_c=30.0, humidity=65,
-            description="Clear Sky", icon="☀️", wind_speed=3.5,
-            condition="Clear", fetched_at=datetime.now(timezone.utc).isoformat(),
-        )
+        # Return error instead of fake data
+        raise HTTPException(503, "Weather API key not configured. Set OPENWEATHERMAP_API_KEY env var.")
 
     params = {"q": f"{req.city},{req.country or ''}".rstrip(","), "units": "metric", "appid": api_key}
     try:

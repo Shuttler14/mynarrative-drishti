@@ -40,10 +40,11 @@ logger = logging.getLogger("drishti.catalog_sync")
 SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL", "https://mynarrative.in")
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 SHOPIFY_ADMIN_TOKEN = os.getenv("SHOPIFY_ADMIN_TOKEN", "")
+SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-01")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-COLLECTION_NAME = "shopify_products"
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "shopify_products")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-VECTOR_SIZE = 384
+VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", "384"))
 
 
 # ── Shopify Storefront API ──
@@ -127,7 +128,7 @@ async def fetch_shopify_products(
 
 async def _fetch_admin_products(first: int = 50, after: str | None = None) -> dict:
     """Fetch products via Shopify Admin REST API (paginated with page_info)."""
-    url = f"{SHOPIFY_STORE_URL}/admin/api/2024-01/products.json?limit={first}"
+    url = f"{SHOPIFY_STORE_URL}/admin/api/{SHOPIFY_API_VERSION}/products.json?limit={first}"
     if after:
         url += f"&page_info={after}"
     headers = {"X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN}
@@ -216,7 +217,7 @@ async def _fetch_admin_products(first: int = 50, after: str | None = None) -> di
 
 async def _fetch_storefront_products(first: int = 50, after: str | None = None) -> dict:
     """Fetch products from Shopify Storefront GraphQL API."""
-    url = f"{SHOPIFY_STORE_URL}/api/2024-01/graphql.json"
+    url = f"{SHOPIFY_STORE_URL}/api/{SHOPIFY_API_VERSION}/graphql.json"
     headers = {
         "Content-Type": "application/json",
         "X-Shopify-Storefront-Access-Token": SHOPIFY_ACCESS_TOKEN,

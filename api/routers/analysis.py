@@ -80,7 +80,7 @@ async def _detect_face_shape(client, image_url: str) -> str:
     """Detect face shape using InsightFace face analysis."""
     try:
         output = client.run(
-            "andreasjansson/face-bounds:913307a91a6c2850c0433b9c0a4ea12eb298e2a86e0e0bcbe6b334e8d78b1ea6",
+            f"andreasjansson/face-bounds:{settings.REPLICATE_FACE_BOUNDS_VERSION}",
             input={"image": image_url}
         )
         # Face bounds give us width/height ratio to determine shape
@@ -127,7 +127,7 @@ async def _extract_skin_color(client, image_url: str) -> dict:
     try:
         # Use a color quantization model to extract dominant colors
         output = client.run(
-            "nightfury/image-color-extraction:3cd834532d85b3295a382a3c15625376e4bd728f8a48e06e395a78a05f42e006",
+            f"nightfury/image-color-extraction:{settings.REPLICATE_COLOR_VERSION}",
             input={"image": image_url, "n_colors": 5}
         )
         if output and "colors" in output:
@@ -161,41 +161,63 @@ async def _extract_skin_color(client, image_url: str) -> dict:
 
 
 async def _detect_hair(client, image_url: str) -> dict:
-    """Detect hair color and style using segmentation."""
+    """Detect hair color and style using BLIP image description."""
     result = {}
     try:
-        # Try to get hair region from person segmentation
         output = client.run(
-            "cjwbw/segment-anything-2:b0c90e38309a06a05c0a804395e3c51e1e5aa7d0a6d25a2f7e5b4a3c0e5f5a5b",
-            input={"image": image_url, "points_per_side": 32}
+            f"salesforce/blip:{settings.REPLICATE_BLIP_VERSION}",
+            input={"image": image_url, "task": "image_captioning"}
         )
-        # Hair color detection from top region of image
-        result["hair_color"] = "brown"
-        result["hair_style"] = "straight"
+        if output:
+            caption = output.lower()
+            # Parse hair color from caption
+            hair_colors = ["black", "brown", "blonde", "red", "auburn", "gray", "white"]
+            for color in hair_colors:
+                if color in caption:
+                    result["hair_color"] = color
+                    break
+            # Parse hair style from caption
+            hair_styles = ["curly", "wavy", "straight", "coily", "ponytail", "bun", "bob"]
+            for style in hair_styles:
+                if style in caption:
+                    result["hair_style"] = style
+                    break
     except Exception as e:
-        logger.warning(f"Hair detection failed: {e}")
+        logger.warning(f"BLIP hair detection failed: {e}")
     return result
 
 
 # ══════════════════════════════════════════════════════════════
-# OPENAI VISION FALLBACK (used if Replicate fails)
+# REPLICATE LLaVA (primary analyzer — OpenAI refuses human image analysis)
 # ══════════════════════════════════════════════════════════════
 
-_BODY_VISION_PROMPT = """You are a professional fashion color analyst and stylist AI. Examine the visible attributes of the subject in this image for fashion styling purposes. This is for a clothing recommendation system — no personal identification.
+_LLaVA_PROMPT = """Analyze this person's appearance for a fashion styling app. Return ONLY a JSON object with these fields:
+{"skin_tone": "fair|light|medium|olive|tan|brown|dark|deep", "body_shape": "hourglass|pear|apple|rectangle|inverted_triangle|athletic|curvy", "face_shape": "oval|round|square|heart|oblong|diamond|triangle", "hair_color": "black|brown|blonde|red|auburn|gray|white|highlighted", "hair_style": "straight|wavy|curly|coily|bob|ponytail|bun|short_crop", "fitness_level": "slim|average|athletic|muscular|plus_size", "complexion": "clear|freckled|tanned|dusky|radiant|matte", "undertone": "warm|cool|neutral|olive"}
+Return ONLY the JSON."""
 
-Analyze the visible physical attributes and return ONLY valid JSON:
-{
-  "skin_tone": "fair|light|medium|olive|tan|brown|dark|deep",
-  "body_shape": "hourglass|pear|apple|rectangle|inverted_triangle|athletic|curvy",
-  "face_shape": "oval|round|square|heart|oblong|diamond|triangle",
-  "hair_color": "black|brown|blonde|red|auburn|gray|white|highlighted",
-  "hair_style": "straight|wavy|curly|coily|bob|ponytail|bun|short_crop",
-  "fitness_level": "slim|average|athletic|muscular|plus_size",
-  "complexion": "clear|freckled|tanned|dusky|radiant|matte",
-  "undertone": "warm|cool|neutral|olive"
-}
 
-Focus on: skin undertone (warm vs cool), face geometry, hair texture, and body proportions. These are standard fashion industry classification categories. Return ONLY the JSON object, no other text."""
+async def _call_llava_vision(client, image_url: str, prompt: str) -> dict[str, Any] | None:
+    """Call Replicate LLaVA model for visual analysis."""
+    try:
+        output = client.run(
+            f"yorickvp/llava-13b:{settings.REPLICATE_LLaVA_VERSION}",
+            input={"image": image_url, "prompt": prompt, "max_tokens": 500}
+        )
+        text = "".join(output)
+        # Extract JSON from response
+        if "```" in text:
+            parts = text.split("```")
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(text[start:end])
+    except Exception as e:
+        logger.warning(f"LLaVA vision failed: {e}")
+    return None
 
 
 async def _call_openai_vision(image_b64: str, prompt: str) -> dict[str, Any] | None:
@@ -208,7 +230,7 @@ async def _call_openai_vision(image_b64: str, prompt: str) -> dict[str, Any] | N
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": "gpt-4o",
+                    "model": settings.OPENAI_MODEL,
                     "max_tokens": 500,
                     "messages": [{"role": "user", "content": [
                         {"type": "text", "text": prompt},
@@ -220,6 +242,11 @@ async def _call_openai_vision(image_b64: str, prompt: str) -> dict[str, Any] | N
                 return None
             data = resp.json()
             content = data["choices"][0]["message"]["content"].strip()
+            # Detect OpenAI safety filter refusals
+            refusal_phrases = ["i'm sorry", "i can't assist", "i cannot assist", "i'm unable", "not appropriate"]
+            if any(phrase in content.lower() for phrase in refusal_phrases):
+                logger.warning(f"OpenAI refused body analysis: {content[:100]}")
+                return None
             if "```" in content:
                 content = content.split("```")[1]
                 if content.startswith("json"):
@@ -266,57 +293,80 @@ def _validate_body_data(raw: dict) -> dict:
 async def _run_body_analysis(image_b64: str, gender: str | None = None) -> tuple[dict, float, str]:
     """
     Run multi-model body analysis pipeline.
-    Priority: OpenAI Vision (primary) → Replicate supplements → defaults.
+    Priority: Replicate LLaVA (primary) → specialized models → defaults.
     Returns (body_data, confidence, source).
     """
     image_url = f"data:image/jpeg;base64,{image_b64}"
-
-    # Step 1: OpenAI GPT-4o Vision as PRIMARY analyzer (it can actually see the image)
-    prompt = _BODY_VISION_PROMPT
-    if gender:
-        prompt += f"\nNote: The person identifies as {gender}."
-    openai_result = await _call_openai_vision(image_b64, prompt)
+    client = _get_replicate_client()
+    if not client:
+        return _validate_body_data({}), 0.30, "no_client"
 
     results = {}
     source_parts = []
 
-    if openai_result:
-        results = openai_result
-        source_parts.append("openai")
+    # Step 1: LLaVA as primary visual analyzer
+    prompt = _LLaVA_PROMPT
+    if gender:
+        prompt += f"\nThe person identifies as {gender}."
+    llava_result = await _call_llava_vision(client, image_url, prompt)
+    if llava_result:
+        results = llava_result
+        source_parts.append("llava")
+        logger.info(f"LLaVA analysis succeeded: {list(results.keys())}")
+    else:
+        logger.warning("LLaVA analysis failed — using specialized models only")
 
-    # Step 2: Supplement with Replicate specialized models for specific measurements
-    client = _get_replicate_client()
-    if client:
-        # Face shape from face-bounds (geometric measurement)
-        try:
-            face_shape = await _detect_face_shape(client, image_url)
-            if face_shape:
-                results["face_shape"] = face_shape
-                source_parts.append("face-bounds")
-        except Exception as e:
-            logger.warning(f"Face shape detection failed: {e}")
+    # Step 2: Supplement/override with specialized Replicate models
+    # Face shape from face-bounds (geometric measurement — more accurate than LLaVA)
+    try:
+        face_shape = await _detect_face_shape(client, image_url)
+        if face_shape:
+            results["face_shape"] = face_shape
+            source_parts.append("face-bounds")
+    except Exception as e:
+        logger.warning(f"Face shape detection failed: {e}")
 
-        # Skin tone from color quantization (pixel-level accuracy)
-        try:
-            skin = await _extract_skin_color(client, image_url)
-            if skin and skin.get("skin_tone"):
-                results["skin_tone"] = skin["skin_tone"]
-                source_parts.append("color-extraction")
-        except Exception as e:
-            logger.warning(f"Skin color extraction failed: {e}")
+    # Skin tone from color quantization (pixel-level accuracy)
+    try:
+        skin = await _extract_skin_color(client, image_url)
+        if skin and skin.get("skin_tone"):
+            results["skin_tone"] = skin["skin_tone"]
+            source_parts.append("color-extraction")
+    except Exception as e:
+        logger.warning(f"Skin color extraction failed: {e}")
+
+    # Hair from BLIP caption
+    try:
+        hair = await _detect_hair(client, image_url)
+        if hair.get("hair_color"):
+            results["hair_color"] = hair["hair_color"]
+            source_parts.append("blip-hair")
+        if hair.get("hair_style"):
+            results["hair_style"] = hair["hair_style"]
+    except Exception as e:
+        logger.warning(f"Hair detection failed: {e}")
 
     # Step 3: Fill any remaining missing fields with defaults
+    # Only fill truly unknown fields — don't bias toward specific values
     defaults = {
-        "skin_tone": "medium", "body_shape": "rectangle", "face_shape": "oval",
-        "hair_color": "brown", "hair_style": "straight", "fitness_level": "average",
-        "complexion": "clear", "undertone": "warm",
+        "skin_tone": "medium",
+        "body_shape": "rectangle",
+        "face_shape": "oval",
+        "hair_color": "black",
+        "hair_style": "straight",
+        "fitness_level": "average",
+        "complexion": "clear",
+        "undertone": "neutral",
     }
+    missing = [k for k, v in defaults.items() if k not in results or not results[k]]
+    if missing:
+        logger.warning(f"Missing fields filled with defaults: {missing}")
     for key, default_val in defaults.items():
         if key not in results or not results[key]:
             results[key] = default_val
 
     source = "+".join(source_parts) if source_parts else "defaults"
-    confidence = 0.88 if "openai" in source_parts else (0.65 if source_parts else 0.30)
+    confidence = 0.88 if "llava" in source_parts else (0.65 if source_parts else 0.30)
 
     return _validate_body_data(results), confidence, source
 
@@ -434,10 +484,10 @@ async def analyze_style(
     dominant_style = max(set(style_keywords), key=style_keywords.count) if style_keywords else "casual"
     results = {
         "dominant_style": dominant_style,
-        "style_personality": {"classic": 0.3, "bohemian": 0.2, "minimalist": 0.3, "trendy": 0.2},
-        "wardrobe_gaps": ["ethnic-formal", "workwear", "party-wear"],
-        "color_palette": ["navy", "white", "beige", "olive"],
-        "recommended_brands": ["Allen Solly", "FabIndia", "W", "Suta"],
+        "style_personality": {},  # Empty — will be filled by AI analysis if available
+        "wardrobe_gaps": [],  # Empty — computed dynamically from wardrobe
+        "color_palette": [],  # Empty — computed from skin tone analysis
+        "recommended_brands": [],  # Empty — computed from budget and preferences
     }
     if user_id:
         analysis = UserAnalysis(user_id=user_id, analysis_type="style", input_data=req.model_dump(), results=results, confidence=0.78)

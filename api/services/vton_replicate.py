@@ -11,11 +11,14 @@ import time
 logger = logging.getLogger("drishti.vton.replicate")
 
 REPLICATE_API = "https://api.replicate.com/v1"
-MODEL_VERSION = "0e122964dd5d7fce695da14e9206f8dd48c0c5595ecb7e3cf1a4078701fb2665"
 
 
 def _get_token() -> str:
     return os.getenv("REPLICATE_API_TOKEN", "")
+
+
+def _get_vton_version() -> str:
+    return os.getenv("REPLICATE_VTON_VERSION", "0e122964dd5d7fce695da14e9206f8dd48c0c5595ecb7e3cf1a4078701fb2665")
 
 
 async def create_try_on_job(
@@ -36,7 +39,7 @@ async def create_try_on_job(
     }
 
     payload = {
-        "version": MODEL_VERSION,
+        "version": _get_vton_version(),
         "input": {
             "person_image": person_image_url,
             "garment_images": [garment_image_url],

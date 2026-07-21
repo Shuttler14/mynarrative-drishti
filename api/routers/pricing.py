@@ -34,6 +34,7 @@ async def compare_prices(
     product_name: str = Query(None),
     brand: str = Query(None),
     category: str = Query(None),
+    gender: str = Query(None, description="Gender hint: 'men' or 'women'"),
     card_bank: str = Query(None, description="User's bank name for card offers (e.g., HDFC, ICICI, SBI)"),
     card_type: str = Query("credit", description="Card type: credit or debit"),
     db: AsyncSession = Depends(get_db),
@@ -60,6 +61,7 @@ async def compare_prices(
             product_name=product_name,
             brand=brand,
             category=category,
+            gender=gender or "",
             sources=["amazon", "flipkart", "myntra", "ajio", "nykaa"],
         )
     except Exception as e:
