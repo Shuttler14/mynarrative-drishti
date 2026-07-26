@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import logging
 import os
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -16,6 +19,58 @@ from api.utils.auth import verify_token
 
 logger = logging.getLogger("drishti.reco")
 router = APIRouter()
+
+
+async def _make_images_accessible(recommendations: list[dict]) -> list[dict]:
+    """Download inaccessible image URLs (Google Shopping thumbnails) and convert to base64 data URIs.
+    
+    Google Shopping thumbnails from SerpApi use encrypted-tbn3.gstatic.com which returns
+    404 when accessed from servers. This function downloads them locally and converts to
+    data URIs so VTON and frontend can use them.
+    """
+    async def _fetch_one(rec: dict) -> dict:
+        url = rec.get("image_url", "")
+        if not url or url.startswith("data:") or "/garments/" in url or "myshopify.com" in url or "r2.cloudflarestorage.com" in url:
+            return rec
+        
+        # Only fix Google Shopping CDN URLs (they're inaccessible externally)
+        if "gstatic.com" not in url and "google" not in url:
+            return rec
+            
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                resp = await client.get(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    "Referer": "https://www.google.com/",
+                })
+                if resp.status_code == 200 and len(resp.content) > 100:
+                    img_bytes = resp.content
+                    ct = "image/jpeg"
+                    if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                        ct = "image/png"
+                    elif img_bytes[:4] == b'RIFF':
+                        ct = "image/webp"
+                    b64 = base64.b64encode(img_bytes).decode()
+                    rec["image_url"] = f"data:{ct};base64,{b64}"
+                    logger.info(f"Proxied Google Shopping image ({len(img_bytes)} bytes)")
+                else:
+                    logger.warning(f"Failed to proxy image: HTTP {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"Failed to proxy image {url[:60]}: {e}")
+        
+        return rec
+    
+    # Process up to 4 images in parallel (avoid overwhelming)
+    tasks = [_fetch_one(rec) for rec in recommendations[:4]]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    out = []
+    for i, rec in enumerate(recommendations):
+        if i < len(results) and isinstance(results[i], dict):
+            out.append(results[i])
+        else:
+            out.append(rec)
+    return out
 
 
 class RecommendRequest(BaseModel):
@@ -101,9 +156,13 @@ async def recommend_outfits(
         )
         
         if result.get("recommendations"):
+            # Post-process: download inaccessible image URLs (Google Shopping thumbnails)
+            # and convert to base64 data URIs so VTON can use them
+            recs = result["recommendations"]
+            recs = await _make_images_accessible(recs)
             # Add aliases for frontend compatibility
-            result["outfits"] = result["recommendations"]
-            result["products"] = result["recommendations"]
+            result["outfits"] = recs
+            result["products"] = recs
             return result
             
     except Exception as e:

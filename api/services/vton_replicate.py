@@ -2,6 +2,7 @@
 Replicate VTON service — wraps prunaai/p-image-try-on for production use.
 """
 import asyncio
+import base64
 import json
 import httpx
 import logging
@@ -21,6 +22,41 @@ def _get_vton_version() -> str:
     return os.getenv("REPLICATE_VTON_VERSION", "0e122964dd5d7fce695da14e9206f8dd48c0c5595ecb7e3cf1a4078701fb2665")
 
 
+async def _download_as_data_uri(url: str) -> str:
+    """Download an image URL and convert to base64 data URI.
+    
+    Replicate cannot fetch many URLs (Google Shopping thumbnails return 404,
+    marketplace CDNs block non-browser requests, R2 presigned URLs may expire).
+    Downloading locally and sending as data URI avoids all these issues.
+    """
+    if url.startswith("data:"):
+        return url
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            })
+            resp.raise_for_status()
+            img_bytes = resp.content
+
+            if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                ct = "image/png"
+            elif img_bytes[:3] == b'\xff\xd8\xff':
+                ct = "image/jpeg"
+            elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+                ct = "image/webp"
+            else:
+                ct = "image/jpeg"
+
+            b64 = base64.b64encode(img_bytes).decode()
+            logger.info(f"Downloaded image ({len(img_bytes)} bytes) → data URI")
+            return f"data:{ct};base64,{b64}"
+    except Exception as e:
+        logger.error(f"Failed to download image for VTON ({url[:80]}): {e}")
+        raise ValueError(f"Cannot fetch image: {url[:80]}... ({e})")
+
+
 async def create_try_on_job(
     person_image_url: str,
     garment_image_url: str,
@@ -28,7 +64,12 @@ async def create_try_on_job(
     num_inference_steps: int = 30,
     guidance_scale: float = 7.5,
 ) -> dict:
-    """Submit a VTON job to Replicate and poll until done."""
+    """Submit a VTON job to Replicate and poll until done.
+    
+    Downloads both person and garment images first, converts to base64 data URIs
+    to avoid DNS/access issues with Google Shopping thumbnails, marketplace CDNs,
+    and expiring R2 presigned URLs.
+    """
     token = _get_token()
     if not token:
         return {"status": "error", "detail": "REPLICATE_API_TOKEN not set"}
@@ -38,11 +79,21 @@ async def create_try_on_job(
         "Content-Type": "application/json",
     }
 
+    # Download both images as data URIs to avoid access issues
+    try:
+        person_data_uri, garment_data_uri = await asyncio.gather(
+            _download_as_data_uri(person_image_url),
+            _download_as_data_uri(garment_image_url),
+        )
+    except ValueError as e:
+        logger.error(f"Image download failed: {e}")
+        return {"status": "error", "detail": str(e)}
+
     payload = {
         "version": _get_vton_version(),
         "input": {
-            "person_image": person_image_url,
-            "garment_images": [garment_image_url],
+            "person_image": person_data_uri,
+            "garment_images": [garment_data_uri],
             "preserve_input_size": True,
             "output_format": "png",
         },
