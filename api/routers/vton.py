@@ -51,6 +51,7 @@ class VTONRequest(BaseModel):
     person_image_url: str | None = None
     vto_engine: str = "idm-vton"
     extract_garment: bool = True  # Run garment extraction preprocessing
+    seed: int | None = None  # Optional seed to re-roll artifacts on regenerate
 
 
 class VTONJobResponse(BaseModel):
@@ -122,28 +123,38 @@ async def extract_garment_upload(
 # ── Helper: preprocess garment image for VTON ──
 
 async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -> str:
-    """Optionally run garment extraction on marketplace images before VTON."""
-    if not should_extract:
+    """Run garment extraction on marketplace images before VTON.
+    
+    Only extracts from HTTP marketplace URLs (Amazon, Myntra, etc.) that show
+    models wearing garments. Skips:
+    - data: URIs (already processed or small thumbnails)
+    - /garments/ URLs (already extracted)
+    - Google Shopping thumbnails (already flat-lay, just tiny)
+    """
+    if not should_extract or not garment_url:
         return garment_url
 
-    # Skip extraction if already a data URI or R2 garment URL
-    if garment_url.startswith("data:"):
-        return garment_url
-    if "/garments/" in garment_url:
+    # Skip extraction for data URIs, R2 garment URLs
+    if garment_url.startswith("data:") or "/garments/" in garment_url:
         return garment_url
 
-    # Check if it looks like a marketplace URL (not already a clean garment)
-    marketplace_domains = ["myntra.com", "myntassets.com", "ajio.com", "jioimages.com", "amazon.in", "amazon.com", "flipkart.com", "meesho.com"]
+    # Only extract from marketplace URLs with model shots
+    marketplace_domains = ["myntra.com", "myntassets.com", "ajio.com", "jioimages.com",
+                           "amazon.in", "amazon.com", "flipkart.com", "meesho.com"]
     is_marketplace = any(d in garment_url for d in marketplace_domains)
 
-    if is_marketplace:
-        logger.info(f"Extracting garment from marketplace URL: {garment_url[:80]}")
-        from api.services.garment_extract import extract_garment
-        result = await extract_garment(garment_url, upload=False)
-        if "error" not in result:
-            # Use data URI for VTON (R2 URLs may not be publicly accessible)
-            return result["garment_image"]
-        logger.warning(f"Garment extraction failed, using original: {result.get('error')}")
+    if not is_marketplace:
+        # Not a marketplace URL (e.g. Unsplash, Google Shopping thumbnail)
+        # Send directly to VTON — it's likely already a flat-lay
+        return garment_url
+
+    logger.info(f"Extracting garment from marketplace URL: {garment_url[:80]}")
+    from api.services.garment_extract import extract_garment
+    result = await extract_garment(garment_url, upload=False)
+    if "error" not in result:
+        logger.info(f"Garment extracted successfully: {result.get('garment_size')}")
+        return result["garment_image"]
+    logger.warning(f"Garment extraction failed, using original: {result.get('error')}")
 
     return garment_url
 
@@ -172,6 +183,7 @@ async def create_vton_job(
         person_image_url=req.person_image_url,
         garment_image_url=garment_url,
         garment_type="top",
+        seed=req.seed,
     )
 
     return {

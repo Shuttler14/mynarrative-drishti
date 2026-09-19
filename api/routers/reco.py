@@ -22,47 +22,59 @@ router = APIRouter()
 
 
 async def _make_images_accessible(recommendations: list[dict]) -> list[dict]:
-    """Download inaccessible image URLs (Google Shopping thumbnails) and convert to base64 data URIs.
+    """Make images accessible for VTON and frontend.
     
-    Google Shopping thumbnails from SerpApi use encrypted-tbn3.gstatic.com which returns
-    404 when accessed from servers. This function downloads them locally and converts to
-    data URIs so VTON and frontend can use them.
+    Strategy:
+    - Google Shopping thumbnails (gstatic.com) are TINY (~100px) — too small for VTON.
+      We download and convert them to data URIs so the frontend can display them,
+      but we also try to get the actual product image from the retailer for VTON.
+    - Marketplace URLs (Amazon, Myntra, etc.) are already accessible — pass through.
+    - Data URIs are already accessible — pass through.
     """
     async def _fetch_one(rec: dict) -> dict:
         url = rec.get("image_url", "")
         if not url or url.startswith("data:") or "/garments/" in url or "myshopify.com" in url or "r2.cloudflarestorage.com" in url:
             return rec
         
-        # Only fix Google Shopping CDN URLs (they're inaccessible externally)
-        if "gstatic.com" not in url and "google" not in url:
+        # Marketplace URLs are accessible — keep as-is for VTON
+        marketplace_domains = ["myntra.com", "myntassets.com", "ajio.com", "jioimages.com",
+                               "amazon.in", "amazon.com", "flipkart.com", "meesho.com"]
+        if any(d in url for d in marketplace_domains):
             return rec
             
-        try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                resp = await client.get(url, headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                    "Referer": "https://www.google.com/",
-                })
-                if resp.status_code == 200 and len(resp.content) > 100:
-                    img_bytes = resp.content
-                    ct = "image/jpeg"
-                    if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
-                        ct = "image/png"
-                    elif img_bytes[:4] == b'RIFF':
-                        ct = "image/webp"
-                    b64 = base64.b64encode(img_bytes).decode()
-                    rec["image_url"] = f"data:{ct};base64,{b64}"
-                    logger.info(f"Proxied Google Shopping image ({len(img_bytes)} bytes)")
-                else:
-                    logger.warning(f"Failed to proxy image: HTTP {resp.status_code}")
-        except Exception as e:
-            logger.warning(f"Failed to proxy image {url[:60]}: {e}")
+        # Google Shopping CDN URLs — download for frontend display
+        if "gstatic.com" in url or "google" in url:
+            try:
+                async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+                    resp = await client.get(url, headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                        "Referer": "https://www.google.com/",
+                    })
+                    if resp.status_code == 200 and len(resp.content) > 100:
+                        img_bytes = resp.content
+                        ct = "image/jpeg"
+                        if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                            ct = "image/png"
+                        elif img_bytes[:4] == b'RIFF':
+                            ct = "image/webp"
+                        b64 = base64.b64encode(img_bytes).decode()
+                        rec["image_url"] = f"data:{ct};base64,{b64}"
+                        logger.info(f"Proxied Google Shopping image ({len(img_bytes)} bytes)")
+                    else:
+                        logger.warning(f"Failed to proxy image: HTTP {resp.status_code}")
+            except Exception as e:
+                logger.warning(f"Failed to proxy image {url[:60]}: {e}")
         
         return rec
     
-    # Process up to 4 images in parallel (avoid overwhelming)
-    tasks = [_fetch_one(rec) for rec in recommendations[:4]]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Process all images with bounded concurrency (avoid overwhelming)
+    sem = asyncio.Semaphore(5)
+
+    async def _guarded(rec: dict) -> dict:
+        async with sem:
+            return await _fetch_one(rec)
+
+    results = await asyncio.gather(*[_guarded(rec) for rec in recommendations], return_exceptions=True)
     
     out = []
     for i, rec in enumerate(recommendations):
@@ -84,10 +96,32 @@ class RecommendRequest(BaseModel):
     # v4.0 additions
     gender: str | None = None
     brands: list[str] = []
-    price_segment: str | None = None  # budget | mid | premium | luxury
+    price_segment: str | None = None  # legacy: budget | mid | premium | luxury
+    price_range: str | None = None  # legacy: under_1500 | 1500_3500 | above_3500
+    # Price intelligence (new)
+    budget_level: str | None = None  # value | contemporary | premium | luxury
+    budget_min: float | None = None  # continuous slider
+    budget_max: float | None = None
+    budget_point: float | None = None  # "around my budget"
+    budget_tolerance_pct: float = 20.0
     weather: dict | None = None
     city: str | None = None
     person_image_url: str | None = None
+
+
+class BrandsRequest(BaseModel):
+    occasion: str | None = None
+    style: str | None = None
+    gender: str | None = None
+    brands: list[str] = []
+    price_segment: str | None = None
+    price_range: str | None = None
+    budget_level: str | None = None
+    budget_min: float | None = None
+    budget_max: float | None = None
+    budget_point: float | None = None
+    budget_tolerance_pct: float = 20.0
+    city: str | None = None
 
 
 class ProductRecommendation(BaseModel):
@@ -151,8 +185,15 @@ async def recommend_outfits(
             body_profile=req.body_profile or {},
             weather=req.weather or {},
             price_segment=req.price_segment or "",
+            price_range=req.price_range or "",
             city=req.city or "",
+            brands=req.brands or [],
             count=req.count or 12,
+            budget_level=req.budget_level or "",
+            budget_min=req.budget_min,
+            budget_max=req.budget_max,
+            budget_point=req.budget_point,
+            budget_tolerance_pct=req.budget_tolerance_pct,
         )
         
         if result.get("recommendations"):
@@ -242,6 +283,40 @@ async def recommend_outfits(
 
     # ── FINAL FALLBACK: Empty ──
     return {"recommendations": [], "count": 0, "source": "none"}
+
+
+@router.post("/brands")
+async def recommend_brands(req: BrandsRequest):
+    """Algorithmically ranked brands for the current context + budget intelligence.
+
+    Powers the live "Brands you'll probably like" panel in the wizard.
+    """
+    try:
+        from api.services.marketplace_reco import get_marketplace_recommendations
+
+        result = await get_marketplace_recommendations(
+            occasion=req.occasion or "",
+            style=req.style or "",
+            gender=req.gender or "",
+            price_segment=req.price_segment or "",
+            price_range=req.price_range or "",
+            city=req.city or "",
+            brands=req.brands or [],
+            count=12,
+            budget_level=req.budget_level or "",
+            budget_min=req.budget_min,
+            budget_max=req.budget_max,
+            budget_point=req.budget_point,
+            budget_tolerance_pct=req.budget_tolerance_pct,
+        )
+        return {
+            "brands": result.get("brands", []),
+            "budget_intelligence": result.get("budget_intelligence", {}),
+            "source": result.get("source", "none"),
+        }
+    except Exception as e:
+        logger.error(f"Brand ranking failed: {e}")
+        return {"brands": [], "budget_intelligence": {}, "source": "error"}
 
 
 @router.get("/trending")

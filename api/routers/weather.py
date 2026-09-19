@@ -16,8 +16,10 @@ OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
 
 
 class WeatherRequest(BaseModel):
-    city: str
+    city: str | None = None
     country: str | None = None
+    lat: float | None = None
+    lon: float | None = None
 
 
 class WeatherResponse(BaseModel):
@@ -47,7 +49,12 @@ async def get_current_weather(req: WeatherRequest):
         # Return error instead of fake data
         raise HTTPException(503, "Weather API key not configured. Set OPENWEATHERMAP_API_KEY env var.")
 
-    params = {"q": f"{req.city},{req.country or ''}".rstrip(","), "units": "metric", "appid": api_key}
+    if req.lat is not None and req.lon is not None:
+        params = {"lat": req.lat, "lon": req.lon, "units": "metric", "appid": api_key}
+    elif req.city:
+        params = {"q": f"{req.city},{req.country or ''}".rstrip(","), "units": "metric", "appid": api_key}
+    else:
+        raise HTTPException(400, "Provide city or lat/lon")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(OPENWEATHER_URL, params=params)

@@ -19,6 +19,8 @@ def _get_token() -> str:
 
 
 def _get_vton_version() -> str:
+    """Pinned model version — quality-verified. The 'latest' version of this
+    model produces worse artifacts (e.g. extra legs), so we keep this pinned."""
     return os.getenv("REPLICATE_VTON_VERSION", "0e122964dd5d7fce695da14e9206f8dd48c0c5595ecb7e3cf1a4078701fb2665")
 
 
@@ -35,7 +37,9 @@ async def _download_as_data_uri(url: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
             resp = await client.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*",
+                "Referer": "https://www.google.com/",
             })
             resp.raise_for_status()
             img_bytes = resp.content
@@ -63,6 +67,7 @@ async def create_try_on_job(
     garment_type: str = "top",
     num_inference_steps: int = 30,
     guidance_scale: float = 7.5,
+    seed: int | None = None,
 ) -> dict:
     """Submit a VTON job to Replicate and poll until done.
     
@@ -89,14 +94,18 @@ async def create_try_on_job(
         logger.error(f"Image download failed: {e}")
         return {"status": "error", "detail": str(e)}
 
+    vton_input = {
+        "person_image": person_data_uri,
+        "garment_images": [garment_data_uri],
+        "preserve_input_size": True,
+        "output_format": "png",
+    }
+    if seed is not None:
+        vton_input["seed"] = int(seed)
+
     payload = {
         "version": _get_vton_version(),
-        "input": {
-            "person_image": person_data_uri,
-            "garment_images": [garment_data_uri],
-            "preserve_input_size": True,
-            "output_format": "png",
-        },
+        "input": vton_input,
     }
 
     start = time.time()
@@ -114,8 +123,8 @@ async def create_try_on_job(
                     await asyncio.sleep(wait)
                     continue
                 if resp.status_code != 201:
-                    logger.error(f"Replicate create failed: {resp.status_code} {resp.text[:200]}")
-                    return {"status": "error", "detail": f"Replicate API error: {resp.status_code}"}
+                    logger.error(f"Replicate create failed: {resp.status_code} {resp.text[:500]}")
+                    return {"status": "error", "detail": f"Replicate API error: {resp.status_code}: {resp.text[:200]}"}
                 pred = resp.json()
                 pred_id = pred["id"]
                 logger.info(f"Replicate prediction created: {pred_id}")
@@ -149,7 +158,10 @@ async def create_try_on_job(
                         "engine": "idm-vton",
                     }
                 elif status in ("failed", "canceled"):
-                    return {"status": "error", "detail": d.get("error", "Prediction failed")}
+                    error_detail = d.get("error", "Prediction failed")
+                    logger.error(f"Replicate prediction {status}: {error_detail}")
+                    logger.error(f"Full response: {json.dumps(d, indent=2)[:500]}")
+                    return {"status": "error", "detail": f"Prediction {status}: {error_detail}"}
 
         return {"status": "error", "detail": "VTON timed out after 120s"}
 

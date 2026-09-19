@@ -85,35 +85,56 @@ async def _fetch_with_retry(url: str, headers: dict, max_retries: int = 1, timeo
 # GOOGLE SHOPPING VIA SERPAPI — Primary price comparison
 # ══════════════════════════════════════════════════════════════
 
-async def search_google_shopping(query: str, max_results: int = 10) -> list[dict]:
-    """Search Google Shopping via SerpApi. Returns products with prices from all platforms."""
+async def search_google_shopping(query: str, max_results: int = 10,
+                                  min_price: int | None = None,
+                                  max_price: int | None = None) -> list[dict]:
+    """Search Google Shopping via SerpApi. Returns products with prices from all platforms.
+
+    NOTE: SerpApi's native min_price/max_price params return zero results with
+    gl=in, so the price band is applied client-side after fetching. Raw results
+    are cached per query — different bands share the same cached fetch.
+    """
     if not SERPAPI_KEY:
         logger.warning("SerpApi key not configured")
         return []
 
     cached = _get_cached("google_shopping", query)
     if cached:
-        return cached.get("products", [])[:max_results]
+        products = cached.get("products", [])
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=25) as client:
+                r = await client.get("https://serpapi.com/search", params={
+                    "engine": "google_shopping",
+                    "q": query,
+                    "gl": "in",
+                    "hl": "en",
+                    "api_key": SERPAPI_KEY,
+                })
+                if r.status_code != 200:
+                    logger.warning(f"SerpApi: HTTP {r.status_code}")
+                    return []
+                data = r.json()
+        except Exception as e:
+            logger.warning(f"SerpApi error: {e}")
+            return []
 
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get("https://serpapi.com/search", params={
-                "engine": "google_shopping",
-                "q": query,
-                "gl": "in",
-                "hl": "en",
-                "api_key": SERPAPI_KEY,
-            })
-            if r.status_code != 200:
-                logger.warning(f"SerpApi: HTTP {r.status_code}")
-                return []
-            data = r.json()
-    except Exception as e:
-        logger.warning(f"SerpApi error: {e}")
-        return []
+        products = _parse_shopping_results(data)
+        if products:
+            _set_cache("google_shopping", query, {"products": products})
 
+    if min_price or max_price:
+        lo = min_price or 0
+        hi = max_price or 10**9
+        products = [p for p in products if lo <= (p.get("price") or 0) <= hi]
+
+    return products[:max_results]
+
+
+def _parse_shopping_results(data: dict) -> list[dict]:
+    """Parse SerpApi shopping_results into product dicts."""
     products = []
-    for item in data.get("shopping_results", [])[:max_results]:
+    for item in data.get("shopping_results", [])[:40]:
         title = item.get("title", "")
         price_str = item.get("price", "")
         extracted_price = item.get("extracted_price", 0)
@@ -122,6 +143,14 @@ async def search_google_shopping(query: str, max_results: int = 10) -> list[dict
         rating = item.get("rating", 0) or 0
         reviews = item.get("reviews", 0) or 0
         thumbnail = item.get("thumbnail", "")
+        # Prefer larger images for VTON — rich_thumbnail is higher quality
+        rich_thumb = item.get("rich_thumbnail", "")
+        if isinstance(rich_thumb, list) and rich_thumb:
+            rich_thumb = rich_thumb[0]
+        elif not isinstance(rich_thumb, str):
+            rich_thumb = ""
+        # Use the best available image (prefer rich_thumbnail > thumbnail)
+        best_image = rich_thumb or thumbnail
         old_price = item.get("old_price", "")
         extracted_old = item.get("extracted_old_price", 0) or extracted_price
 
@@ -163,15 +192,13 @@ async def search_google_shopping(query: str, max_results: int = 10) -> list[dict
             "discount_pct": min(discount_pct, 90),
             "rating": round(rating, 1),
             "rating_count": reviews,
-            "image_url": thumbnail,
+            "image_url": best_image,
             "url": clean_link or link,
             "color": "",
             "category": "",
             "seller": source,
         })
 
-    if products:
-        _set_cache("google_shopping", query, {"products": products})
     return products
 
 
