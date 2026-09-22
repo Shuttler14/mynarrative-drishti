@@ -69,7 +69,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-from api.routers import user, catalog, analysis, look, reco, pricing, offer, webhooks, admin, vton, weather
+from api.routers import user, catalog, analysis, look, reco, pricing, offer, webhooks, admin, vton, weather, attribution
 
 app.include_router(user.router, prefix="/api/user", tags=["User"])
 app.include_router(catalog.router, prefix="/api/catalog", tags=["Catalog"])
@@ -82,6 +82,7 @@ app.include_router(vton.router, prefix="/api/vton", tags=["VTON"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
+app.include_router(attribution.router, prefix="/api/attribution", tags=["Attribution"])
 
 
 @app.get("/health")
