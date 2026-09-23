@@ -817,6 +817,7 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
     buckets: dict[str, list[dict]] = {"top": [], "bottom": [], "shoes": [], "accessory": []}
     seen_titles = set()
     seen_combos: dict[tuple, int] = {}
+    has_full_outfit = False  # Track if a saree/dress/kurta set was picked
 
     def _similar(a: frozenset, b: frozenset) -> bool:
         if not a or not b:
@@ -847,8 +848,14 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
 
     def _admissible(p: dict) -> bool:
         b = _bucket(p)
+        # Full outfits (saree, dress, kurta set) take the whole slot — no bottom needed
+        if b == "top" and p["fashion"].get("slot") == "full":
+            return True
         if b == "top":
             return True
+        # Skip bottom if a full outfit is already selected
+        if b == "bottom" and has_full_outfit:
+            return False
         if len([x for x in selected if _bucket(x) != "top"]) >= max_non_top:
             return False
         if cat_counts.get(p["fashion"]["category"], 0) >= 2:
@@ -865,15 +872,24 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
                 continue
             used_ids.add(id(p))
             cat_counts[p["fashion"]["category"]] = cat_counts.get(p["fashion"]["category"], 0) + 1
+            # Mark full outfit so we skip bottom
+            if _bucket(p) == "top" and p["fashion"].get("slot") == "full":
+                nonlocal has_full_outfit
+                has_full_outfit = True
             return p
         return None
 
     fill_order = ("top", "bottom", "shoes", "accessory")
     for slot in order:
+        # Skip bottom if full outfit already selected
+        if slot == "bottom" and has_full_outfit:
+            continue
         p = take(slot)
         if p is None:
             for b in fill_order:
                 if b == slot:
+                    continue
+                if b == "bottom" and has_full_outfit:
                     continue
                 p = take(b)
                 if p:
