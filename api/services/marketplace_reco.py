@@ -9,6 +9,7 @@ Google Shopping is the discovery layer; fashion intelligence lives in the engine
 """
 import asyncio
 import logging
+import re
 
 from api.services.price_scraper import (
     scrape_amazon,
@@ -25,30 +26,64 @@ from api.services.fashion_engine import (
 logger = logging.getLogger("drishti.reco.marketplace")
 
 
+def _slugify(title: str) -> str:
+    """Lowercase dash slug for marketplace search paths (Myntra-style)."""
+    s = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
+    s = re.sub(r"-{2,}", "-", s)
+    return s[:90]
+
+
+def _resolve_product_url(product: dict) -> str:
+    """Return a working shop URL for a product.
+
+    Priority:
+      1. Direct product URL from the scraper (never google search pages)
+      2. Marketplace search URL in the platform's native format
+         (Myntra needs dash slugs — plus-joined paths redirect into
+         edge "Access Denied" pages)
+      3. Myntra fashion search as a generic fallback (never google.com,
+         which renders CAPTCHA walls on many networks)
+    """
+    from urllib.parse import quote_plus
+
+    url = (product.get("url") or "").strip()
+    if url and "google.com/search" not in url:
+        return url
+
+    title = product.get("title", "")
+    source = (product.get("source") or "").lower()
+    query = quote_plus(title)
+    slug = _slugify(title)
+
+    if source == "amazon":
+        return f"https://www.amazon.in/s?k={query}"
+    if source == "flipkart":
+        return f"https://www.flipkart.com/search?q={query}"
+    if source == "myntra":
+        return f"https://www.myntra.com/{slug}" if slug else f"https://www.myntra.com/search?rawQuery={query}"
+    if source == "ajio":
+        return f"https://www.ajio.com/search/?text={query}"
+    if source in ("nykaaman", "nykaa", "nykaafashion"):
+        return f"https://www.nykaafashion.com/search?q={query}"
+    if source == "meesho":
+        return f"https://www.meesho.com/search?q={query}"
+    if source == "jiomart":
+        return f"https://www.jiomart.com/search/{query}"
+    if source == "tatacliq":
+        return f"https://www.tatacliq.com/search/?searchCategory=all&text={query}"
+    if source == "snapdeal":
+        return f"https://www.snapdeal.com/search?keyword={query}"
+
+    # Unknown/brand source: fashion search on Myntra (works reliably)
+    return f"https://www.myntra.com/{slug}" if slug else f"https://www.myntra.com/search?rawQuery={query}"
+
+
 def _format_product_for_reco(product: dict) -> dict:
     """Format an enriched marketplace product into the recommendation contract."""
     source = product.get("source", "")
     product_id = product.get("product_id", "")
 
-    # Always prefer the actual URL from the scraper (direct product link)
-    url = product.get("url", "")
-    # Fallback: construct marketplace search URL so user can find the product
-    if not url or "google.com/search" in url:
-        from urllib.parse import quote_plus
-        title = product.get("title", "")
-        query = quote_plus(title)
-        if source == "amazon":
-            url = f"https://www.amazon.in/s?k={query}"
-        elif source == "flipkart":
-            url = f"https://www.flipkart.com/search?q={query}"
-        elif source == "myntra":
-            url = f"https://www.myntra.com/{query}"
-        elif source == "ajio":
-            url = f"https://www.ajio.com/search/?text={query}"
-        elif source == "nykaaman" or source == "nykaa":
-            url = f"https://www.nykaaman.com/search?q={query}"
-        else:
-            url = f"https://www.google.com/search?q={query}"
+    url = _resolve_product_url(product)
 
     fashion = product.get("fashion", {})
 

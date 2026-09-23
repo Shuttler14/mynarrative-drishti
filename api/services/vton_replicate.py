@@ -63,45 +63,62 @@ async def _download_as_data_uri(url: str) -> str:
 
 async def create_try_on_job(
     person_image_url: str,
-    garment_image_url: str,
+    garment_image_url: str | None = None,
     garment_type: str = "top",
     num_inference_steps: int = 30,
     guidance_scale: float = 7.5,
     seed: int | None = None,
+    garment_image_urls: list[str] | None = None,
+    prompt: str | None = None,
 ) -> dict:
     """Submit a VTON job to Replicate and poll until done.
-    
-    Downloads both person and garment images first, converts to base64 data URIs
-    to avoid DNS/access issues with Google Shopping thumbnails, marketplace CDNs,
-    and expiring R2 presigned URLs.
+
+    Supports the full-look try-on: pass ``garment_image_urls`` (up to 4) to
+    dress the person in top + bottom + shoes in one coherent generation.
+    The pinned prunaai/p-image-try-on version renders all provided garments,
+    including footwear, when they are provided together.
+
+    Single ``garment_image_url`` stays supported for backward compatibility.
+    Images are downloaded and converted to base64 data URIs to avoid DNS/access
+    issues with Google Shopping thumbnails, marketplace CDNs, and expiring R2
+    presigned URLs.
     """
     token = _get_token()
     if not token:
         return {"status": "error", "detail": "REPLICATE_API_TOKEN not set"}
+
+    garment_urls = [u for u in (garment_image_urls or []) if u] or \
+                   ([garment_image_url] if garment_image_url else [])
+    if not garment_urls:
+        return {"status": "error", "detail": "No garment image provided"}
 
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
-    # Download both images as data URIs to avoid access issues
+    # Download all images as data URIs to avoid access issues
     try:
-        person_data_uri, garment_data_uri = await asyncio.gather(
+        downloaded = await asyncio.gather(
             _download_as_data_uri(person_image_url),
-            _download_as_data_uri(garment_image_url),
+            *[_download_as_data_uri(u) for u in garment_urls],
         )
     except ValueError as e:
         logger.error(f"Image download failed: {e}")
         return {"status": "error", "detail": str(e)}
 
+    person_data_uri, garment_data_uris = downloaded[0], list(downloaded[1:])
+
     vton_input = {
         "person_image": person_data_uri,
-        "garment_images": [garment_data_uri],
+        "garment_images": garment_data_uris,
         "preserve_input_size": True,
         "output_format": "png",
     }
     if seed is not None:
         vton_input["seed"] = int(seed)
+    if prompt:
+        vton_input["prompt"] = prompt
 
     payload = {
         "version": _get_vton_version(),

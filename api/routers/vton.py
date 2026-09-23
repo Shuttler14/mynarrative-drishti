@@ -47,7 +47,8 @@ class WidgetTryOnRequest(BaseModel):
 
 
 class VTONRequest(BaseModel):
-    garment_image_url: str
+    garment_image_url: str | None = None
+    garment_image_urls: list[str] | None = None  # full-look try-on (top+bottom+shoes)
     person_image_url: str | None = None
     vto_engine: str = "idm-vton"
     extract_garment: bool = True  # Run garment extraction preprocessing
@@ -172,16 +173,26 @@ async def create_vton_job(
         if payload:
             user_id = payload["sub"]
 
-    # Preprocess garment image (extract from marketplace if needed)
-    garment_url = await _preprocess_garment_for_vton(
-        req.garment_image_url, req.extract_garment
-    )
+    # Full-look try-on: top + bottom + shoes in one generation (max 4 garments)
+    garment_urls = [u for u in (req.garment_image_urls or []) if u][:4]
+    if not garment_urls and req.garment_image_url:
+        garment_urls = [req.garment_image_url]
+
+    if not garment_urls:
+        raise HTTPException(400, "garment_image_url or garment_image_urls required")
+
+    # Preprocess garment images (extract from marketplace if needed)
+    processed = [
+        await _preprocess_garment_for_vton(u, req.extract_garment)
+        for u in garment_urls
+    ]
 
     from api.services.vton_replicate import create_try_on_job
 
     result = await create_try_on_job(
         person_image_url=req.person_image_url,
-        garment_image_url=garment_url,
+        garment_image_url=processed[0],
+        garment_image_urls=processed,
         garment_type="top",
         seed=req.seed,
     )
@@ -192,7 +203,7 @@ async def create_vton_job(
         "processing_time_ms": result.get("processing_time_ms"),
         "quality_score": result.get("quality_score"),
         "engine": result.get("engine", "idm-vton"),
-        "garment_extracted": garment_url != req.garment_image_url,
+        "garment_extracted": any(p != u for p, u in zip(processed, garment_urls)),
         "message": result.get("detail", "VTON completed"),
     }
 

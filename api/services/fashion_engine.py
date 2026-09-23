@@ -471,8 +471,44 @@ _NEUTRAL_SLOTS: dict[str, dict[str, list[str]]] = {
 }
 
 
+# Query variation synonyms — randomly pick one per base query to diversify results
+_QUERY_VARIATIONS: dict[str, list[str]] = {
+    # Men office
+    "men formal shirt": ["men formal shirt", "men formal shirt slim fit", "men cotton formal shirt", "men wrinkle-free shirt", "men office shirt"],
+    "men blazer": ["men blazer", "men slim blazer", "men single breasted blazer", "men formal blazer", "men office blazer"],
+    "men formal trousers": ["men formal trousers", "men slim fit trousers", "men flat front trousers", "men office trousers", "men dress pants"],
+    "men formal shoes": ["men formal shoes", "men oxford shoes", "men derby shoes", "men leather shoes", "men lace-up shoes"],
+    # Men casual
+    "men casual shirt": ["men casual shirt", "men linen shirt", "men half-sleeve shirt", "men printed shirt", "men relaxed fit shirt"],
+    "men oversized t-shirt": ["men oversized t-shirt", "men drop shoulder t-shirt", "men boxy fit t-shirt", "men graphic tee"],
+    "men jeans": ["men jeans", "men slim fit jeans", "men straight jeans", "men tapered jeans", "men stretch jeans"],
+    "men white sneakers": ["men white sneakers", "men court shoes", "men canvas sneakers", "men low top sneakers"],
+    # Men party
+    "men party shirt": ["men party shirt", "men printed shirt", "men satin shirt", "men statement shirt"],
+    "men satin shirt": ["men satin shirt", "men silk shirt", "men shiny shirt"],
+    "men party trousers": ["men party trousers", "men slim trousers", "men tapered trousers"],
+    # Women office
+    "women formal shirt": ["women formal shirt", "women crisp shirt", "women cotton shirt", "women office shirt", "women button-down shirt"],
+    "women blouse": ["women blouse", "women formal blouse", "women office blouse", "women tailored blouse"],
+    "women formal trousers": ["women formal trousers", "women slim trousers", "women office trousers", "women tailored trousers", "women pencil trousers"],
+    "women loafers": ["women loafers", "women formal flats", "women pointed flats", "women leather loafers"],
+    # Women casual
+    "women casual top": ["women casual top", "women relaxed top", "women everyday top", "women cotton top"],
+    "women oversized t-shirt": ["women oversized t-shirt", "women drop shoulder tee", "women boxy t-shirt"],
+    "women jeans": ["women jeans", "women skinny jeans", "women straight jeans", "women mom jeans"],
+    # Women party
+    "women party dress": ["women party dress", "women cocktail dress", "women mini dress", "women sequin dress"],
+    "women sequin top": ["women sequin top", "women sparkly top", "women glam top"],
+}
+
+import random as _random
+
 def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 4) -> list[tuple[str, str]]:
-    """Generate slot-labelled Google Shopping queries for this intent."""
+    """Generate slot-labelled Google Shopping queries for this intent.
+    
+    Each base query is randomly varied from _QUERY_VARIATIONS so different
+    users (and the same user on different visits) see different products.
+    """
     gender = intent.get("gender", "")
     occasion = intent.get("occasion", "casual")
     style = intent.get("style", "")
@@ -493,10 +529,13 @@ def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 4) -> li
         candidates = list(slot_map.get(slot, []))
         for i, base in enumerate(candidates):
             q = base
+            # Apply query variation for diversity
+            if base in _QUERY_VARIATIONS:
+                q = _random.choice(_QUERY_VARIATIONS[base])
             if style_mod and i == 0:
                 mod_words = style_mod.split()
                 if not all(w in q for w in mod_words):
-                    q = f"{mod_words[0]} {base}"
+                    q = f"{mod_words[0]} {q}"
             if i == 0 and fabric_hint and slot == "primary" and fabric_hint not in q:
                 q = f"{q} {fabric_hint}"
             q = re.sub(r"\s+", " ", q).strip()
@@ -795,6 +834,10 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
             continue
         seen_combos[combo] = seen_combos.get(combo, 0) + 1
         buckets[_bucket(p)].append(p)
+
+    # Shuffle buckets for variety — same scores, different picks each time
+    for b in buckets.values():
+        _random.shuffle(b)
 
     order = _slot_order(count)
     max_non_top = max(1, count // 3) if count >= 4 else 0

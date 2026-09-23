@@ -31,7 +31,7 @@ _USER_AGENTS = [
 
 _cache: dict[str, tuple[float, dict]] = {}
 # Configurable via env vars, with sensible defaults
-CACHE_TTL = int(os.getenv("SCRAPING_CACHE_TTL", "86400"))  # 24 hours
+CACHE_TTL = int(os.getenv("SCRAPING_CACHE_TTL", "14400"))  # 4 hours (was 24h — too stale for fashion)
 _last_request: dict[str, float] = {}
 MIN_DELAY = float(os.getenv("SCRAPING_MIN_DELAY", "0.5"))
 
