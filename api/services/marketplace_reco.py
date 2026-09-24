@@ -9,6 +9,7 @@ Google Shopping is the discovery layer; fashion intelligence lives in the engine
 """
 import asyncio
 import logging
+import os
 import re
 
 from api.services.price_scraper import (
@@ -22,6 +23,7 @@ from api.services.fashion_engine import (
     enrich_product,
     recommend_products,
 )
+from api.services import fashion_rules as frules
 
 logger = logging.getLogger("drishti.reco.marketplace")
 
@@ -144,13 +146,26 @@ async def _search_google_shopping_slots(
 
 
 async def _scraper_fallback(query: str) -> list[dict]:
-    """Direct marketplace scrapers when Google Shopping under-delivers."""
-    tasks = [
-        scrape_amazon(query, max_results=5),
-        scrape_flipkart(query, max_results=5),
-        scrape_myntra(query, max_results=5),
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    """Direct marketplace scrapers when Google Shopping under-delivers.
+
+    Each marketplace gets its own deadline — one hung Flipkart retry must not
+    cancel Amazon/Myntra results that already finished (that emptied the pool
+    and sent office traffic to the random Shopify hoodie fallback).
+    """
+    per_scraper = float(os.getenv("SCRAPER_PER_TIMEOUT", "6"))
+
+    async def _one(coro) -> list[dict]:
+        try:
+            return await asyncio.wait_for(coro, timeout=per_scraper)
+        except Exception as exc:
+            logger.debug(f"Scraper partial timeout/err for '{query[:50]}': {exc}")
+            return []
+
+    results = await asyncio.gather(
+        _one(scrape_amazon(query, max_results=5)),
+        _one(scrape_flipkart(query, max_results=5)),
+        _one(scrape_myntra(query, max_results=5)),
+    )
     products: list[dict] = []
     for result in results:
         if isinstance(result, list):
@@ -174,8 +189,17 @@ async def search_marketplace_products(
     budget_max: float | None = None,
     budget_point: float | None = None,
     budget_tolerance_pct: float = 20.0,
+    prefs: dict | None = None,
+    user_id: str | None = None,
 ) -> dict:
     """Search marketplaces → enrich → price intelligence → scored selection."""
+    # Soft preference budget fallback when request didn't send one
+    if prefs and budget_min is None and budget_max is None:
+        if prefs.get("budget_min") is not None:
+            budget_min = prefs["budget_min"]
+        if prefs.get("budget_max") is not None:
+            budget_max = prefs["budget_max"]
+
     intent = build_intent(
         occasion=occasion,
         style=style,
@@ -190,31 +214,117 @@ async def search_marketplace_products(
         budget_max=budget_max,
         budget_point=budget_point,
         budget_tolerance_pct=budget_tolerance_pct,
+        user_prefs=prefs,
     )
     intent["body_shape"] = (body_profile or {}).get("body_shape", "")
+    if user_id:
+        intent["user_id"] = user_id
+    if prefs:
+        intent["user_prefs"] = prefs
+        # Extend palette with DNA colours when present
+        dna_colors = (prefs.get("dna") or {}).get("colours") or prefs.get("colors") or []
+        if isinstance(dna_colors, list):
+            intent["palette"] = set(intent.get("palette") or set()) | {str(c).lower() for c in dna_colors}
+        # Request-level style multi-select: prefer first non-empty as style terms source
+        if not intent.get("style_query_terms") and prefs.get("styles"):
+            first_style = prefs["styles"][0] if isinstance(prefs.get("styles"), list) else ""
+            if first_style:
+                intent["style_query_terms"] = frules.style_query_terms(first_style)
+
+    # Outfit blueprint → slot queries (occasions-aware, with exclusions)
+    blueprints: list[dict] = []
+    try:
+        blueprints = frules.build_outfit_blueprints(intent, n=3)
+        intent["blueprints"] = [
+            {"id": b["id"], "label": b["label"], "variant": b["variant"],
+             "archetype": b["archetype"], "dress_code": b["dress_code"],
+             "why": frules.explain_blueprint(b, intent)}
+            for b in blueprints
+        ]
+    except Exception as exc:
+        logger.warning(f"Blueprint generation failed: {exc}")
 
     slot_queries = build_slot_queries(intent, count=count)
+    # New users (no user_id) / thin count → simple query set so first results
+    # land fast: one blueprint's primary+bottom+shoes is enough to show a look.
+    if not user_id and count <= 6:
+        slot_queries = slot_queries[:3]
     logger.info(f"Slot queries: {slot_queries} (budget mode: {intent.get('budget_mode')})")
 
     products = await _search_google_shopping_slots(slot_queries)
 
     if len(products) < max(6, count):
-        logger.info(f"Google Shopping under-delivered ({len(products)}), using scraper fallback")
-        primary_query = slot_queries[0][1] if slot_queries else "fashion"
-        fallback = await _scraper_fallback(primary_query)
+        logger.info(f"Google Shopping under-delivered ({len(products)}), using slot-aware scraper fallback")
+        by_slot: dict[str, int] = {}
+        for p in products:
+            s = p.get("query_slot") or "primary"
+            by_slot[s] = by_slot.get(s, 0) + 1
         seen = {(p.get("source"), p.get("product_id")) for p in products}
-        for p in fallback:
-            key = (p.get("source"), p.get("product_id"))
-            if key not in seen:
+        targets = {"primary": 4, "bottom": 2, "shoes": 2, "accessory": 1}
+        slots_in_queries = {sq[0] for sq in slot_queries}
+
+        # Parallel fill: all under-target slot scrapers at once (was sequential —
+        # 4 queries × ~4–15s each made first paint take ~60s for new users).
+        pending = [
+            (slot, query)
+            for slot, query in slot_queries
+            if by_slot.get(slot, 0) < targets.get(slot, 2)
+        ]
+        # Hard deadline so a hung marketplace can't block first paint.
+        # New users get a tighter budget — show something good, fast.
+        # Per-scraper timeout is 6s inside _scraper_fallback, so 10/15s here
+        # only guards the outer merge (not the first thing that hangs).
+        deadline = float(os.getenv("SCRAPER_TOTAL_TIMEOUT", "0")) or (
+            10.0 if not user_id else 15.0
+        )
+        tasks = [asyncio.create_task(_scraper_fallback(q)) for _, q in pending]
+        if tasks:
+            done, _still = await asyncio.wait(tasks, timeout=deadline)
+            fetched = []
+            for t in tasks:
+                if t.done() and not t.cancelled():
+                    fetched.append(t.exception() or t.result())
+                else:
+                    t.cancel()
+                    fetched.append(asyncio.TimeoutError(f"scraper exceeded {deadline}s"))
+        else:
+            fetched = []
+
+        # Merge bottom → shoes → primary so scarce slots claim inventory first
+        slot_priority = {"bottom": 0, "shoes": 1, "primary": 2, "accessory": 3}
+        merged: list[tuple[str, list[dict]]] = []
+        for (slot, query), result in zip(pending, fetched):
+            if isinstance(result, Exception):
+                logger.warning(f"Scraper fallback '{slot}' ('{query}') failed: {result}")
+                continue
+            merged.append((slot, result))
+        merged.sort(key=lambda item: slot_priority.get(item[0], 9))
+
+        for slot, fallback in merged:
+            target = targets.get(slot, 2)
+            max_add = max(target, 3) if slot != "primary" else 6
+            added = 0
+            for p in fallback:
+                if by_slot.get(slot, 0) >= target and slot != "primary":
+                    break
+                key = (p.get("source"), p.get("product_id"))
+                if key in seen:
+                    continue
                 seen.add(key)
-                p.setdefault("query_slot", "primary")
+                p.setdefault("query_slot", slot)
                 products.append(p)
+                by_slot[slot] = by_slot.get(slot, 0) + 1
+                added += 1
+                if added >= max_add:
+                    break
+        logger.info(f"Slot-aware fallback done: by_slot={by_slot}, total={len(products)}")
 
     for p in products:
         enrich_product(p)
 
     result = recommend_products(products, intent, count)
     result["intent"] = intent
+    result["blueprints"] = intent.get("blueprints", [])
     return result
 
 
@@ -234,6 +344,8 @@ async def get_marketplace_recommendations(
     budget_max: float | None = None,
     budget_point: float | None = None,
     budget_tolerance_pct: float = 20.0,
+    prefs: dict | None = None,
+    user_id: str | None = None,
 ) -> dict:
     """Main entry point: recommendations + budget intelligence + ranked brands."""
     from api.services.price_intelligence import (
@@ -256,6 +368,8 @@ async def get_marketplace_recommendations(
         budget_max=budget_max,
         budget_point=budget_point,
         budget_tolerance_pct=budget_tolerance_pct,
+        prefs=prefs,
+        user_id=user_id,
     )
 
     selected = result.get("selected", [])
@@ -263,6 +377,8 @@ async def get_marketplace_recommendations(
     dist = result.get("distribution", {})
     candidates = result.get("candidates") or selected
     intent = result.get("intent", {})
+    validation = result.get("validation") or intent.get("outfit_validation") or {}
+    blueprints = result.get("blueprints") or intent.get("blueprints") or []
 
     recommendations = [_format_product_for_reco(p) for p in selected[:count]]
 
@@ -274,6 +390,15 @@ async def get_marketplace_recommendations(
         "count": len(recommendations),
         "source": "fashion_engine",
         "platforms_searched": ["google_shopping", "amazon", "myntra", "flipkart"],
+        "looks": blueprints,
+        "outfit_validation": {
+            "passed": validation.get("passed", True),
+            "confidence": validation.get("confidence", 0.5),
+            "level": validation.get("level", "medium"),
+            "dress_code": validation.get("dress_code") or intent.get("dress_code", ""),
+            "violations": validation.get("violations", []),
+            "scores": validation.get("scores", {}),
+        },
         "budget_intelligence": {
             "mode": intent.get("budget_mode", "none"),
             "level": intent.get("budget_level", ""),

@@ -16,8 +16,14 @@ class Base(DeclarativeBase):
 
 
 class TimestampMixin:
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    # Columns are TIMESTAMP WITHOUT TIME ZONE — store naive UTC to match asyncpg
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        nullable=False,
+    )
 
 
 class User(Base, TimestampMixin):
@@ -35,9 +41,11 @@ class User(Base, TimestampMixin):
     body_profile = Column(JSON, default=dict)
     style_profile = Column(JSON, default=dict)
     wallet_balance = Column(Integer, default=0)
+    shopify_customer_id = Column(String(64), unique=True, nullable=True, index=True)
 
     sessions = relationship("Session", back_populates="user")
     analyses = relationship("UserAnalysis", back_populates="user")
+    style_prefs = relationship("UserStylePref", back_populates="user")
 
 
 class OTPRecord(Base, TimestampMixin):
@@ -229,6 +237,47 @@ class VTONJob(Base, TimestampMixin):
 
     __table_args__ = (
         Index("idx_vton_status", "status"),
+    )
+
+
+class UserStylePref(Base, TimestampMixin):
+    __tablename__ = "user_style_prefs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    occasion = Column(String(100), nullable=False, index=True)
+    wear_weights = Column(JSON, default=dict)
+    vibes = Column(JSON, default=list)
+    brands = Column(JSON, default=list)
+    budget_min = Column(Float, nullable=True)
+    budget_max = Column(Float, nullable=True)
+    adventure_level = Column(String(20), default="balanced")
+    confidence = Column(Float, default=0.5)
+    source = Column(String(50), default="wizard")
+
+    user = relationship("User", back_populates="style_prefs")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "occasion", name="uq_user_style_pref_occasion"),
+        Index("idx_user_style_pref_user", "user_id"),
+    )
+
+
+class UserEvent(Base):
+    __tablename__ = "user_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    occasion = Column(String(100), nullable=True)
+    session_id = Column(String(100), nullable=True)
+    payload = Column(JSON, default=dict)
+    weight = Column(Float, default=1.0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_user_event_user_type", "user_id", "event_type"),
+        Index("idx_user_event_created", "created_at"),
     )
 
 

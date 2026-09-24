@@ -31,6 +31,10 @@ async def _download_as_data_uri(url: str) -> str:
     marketplace CDNs block non-browser requests, R2 presigned URLs may expire).
     Downloading locally and sending as data URI avoids all these issues.
     """
+    if url is None:
+        raise ValueError("Image URL is missing")
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("Image URL is empty")
     if url.startswith("data:"):
         return url
 
@@ -57,8 +61,8 @@ async def _download_as_data_uri(url: str) -> str:
             logger.info(f"Downloaded image ({len(img_bytes)} bytes) → data URI")
             return f"data:{ct};base64,{b64}"
     except Exception as e:
-        logger.error(f"Failed to download image for VTON ({url[:80]}): {e}")
-        raise ValueError(f"Cannot fetch image: {url[:80]}... ({e})")
+        logger.error(f"Failed to download image for VTON ({str(url)[:80]}): {e}")
+        raise ValueError(f"Cannot fetch image: {str(url)[:80]}... ({e})")
 
 
 async def create_try_on_job(
@@ -98,12 +102,14 @@ async def create_try_on_job(
     }
 
     # Download all images as data URIs to avoid access issues
+    if not person_image_url:
+        return {"status": "error", "detail": "person_image_url is required"}
     try:
         downloaded = await asyncio.gather(
             _download_as_data_uri(person_image_url),
             *[_download_as_data_uri(u) for u in garment_urls],
         )
-    except ValueError as e:
+    except Exception as e:
         logger.error(f"Image download failed: {e}")
         return {"status": "error", "detail": str(e)}
 

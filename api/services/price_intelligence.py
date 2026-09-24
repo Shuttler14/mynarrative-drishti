@@ -73,15 +73,25 @@ def price_distribution(products: list[dict]) -> dict:
 
 
 def distribution_by_slot(products: list[dict]) -> dict:
-    """Per-slot distributions (tops vs bottoms price differently)."""
+    """Per-slot distributions (tops vs bottoms price differently).
+
+    Always emit an entry when a slot has any items — the old `>= 5` gate
+    returned `{}` for thin shoes/bottom pools and made the UI think coverage
+    was zero when it was merely sparse.
+    """
     buckets: dict[str, list[dict]] = defaultdict(list)
     for p in products:
-        slot = (p.get("fashion") or {}).get("slot", "top")
+        slot = (p.get("fashion") or {}).get("slot") or p.get("slot") or "top"
         buckets[slot].append(p)
     out = {}
     for slot, items in buckets.items():
-        if len(items) >= 5:
-            out[slot] = price_distribution(items)
+        if not items:
+            continue
+        dist = price_distribution(items)
+        dist["item_count"] = len(items)
+        if len(items) < 5:
+            dist["thin"] = True
+        out[slot] = dist
     return out
 
 

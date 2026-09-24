@@ -1,0 +1,4801 @@
+{
+  "version": "1.0",
+  "meta": {
+    "name": "My Narrative Fashion Rules Engine",
+    "region": "India-first",
+    "genders": [
+      "female",
+      "male"
+    ],
+    "note": "Machine-readable outfit grammar. Loaded by api/services/fashion_rules.py."
+  },
+  "occasion_aliases": {
+    "everyday": "casual",
+    "daily": "casual",
+    "errands": "casual",
+    "weekend": "casual",
+    "office": "work",
+    "workplace": "work",
+    "meeting": "work",
+    "client meeting": "work",
+    "presentation": "work",
+    "corporate": "work",
+    "startup": "work",
+    "job": "work",
+    "interview": "interview",
+    "job interview": "interview",
+    "campus placement": "interview",
+    "dinner": "date",
+    "date night": "date",
+    "romantic dinner": "date",
+    "club": "party",
+    "night out": "party",
+    "lounge": "party",
+    "house party": "party",
+    "cocktail": "party",
+    "concert": "party",
+    "social event": "party",
+    "trip": "travel",
+    "vacation": "travel",
+    "flight": "travel",
+    "road trip": "travel",
+    "sangeet": "wedding",
+    "haldi": "wedding",
+    "mehendi": "wedding",
+    "mehndi": "wedding",
+    "reception": "wedding",
+    "wedding ceremony": "wedding",
+    "shaadi": "wedding",
+    "marriage": "wedding",
+    "wedding guest": "wedding",
+    "baraat": "wedding",
+    "diwali": "festive",
+    "eid": "festive",
+    "navratri": "festive",
+    "durga puja": "festive",
+    "onam": "festive",
+    "pongal": "festive",
+    "baisakhi": "festive",
+    "raksha bandhan": "festive",
+    "ganesh chaturthi": "festive",
+    "janmashtami": "festive",
+    "christmas": "festive",
+    "new year": "festive",
+    "lori": "festive",
+    "karwa chauth": "festive",
+    "temple": "traditional",
+    "puja": "traditional",
+    "religious": "traditional",
+    "cultural function": "traditional",
+    "family ceremony": "traditional",
+    "gym": "gym",
+    "workout": "gym",
+    "running": "gym",
+    "yoga": "gym",
+    "trekking": "gym",
+    "sports": "gym",
+    "badminton": "gym",
+    "cycling": "gym",
+    "beach": "beach",
+    "goa": "beach",
+    "resort": "beach",
+    "island": "beach",
+    "brunch": "brunch",
+    "cafe": "brunch",
+    "coffee": "brunch",
+    "college": "college",
+    "campus": "college",
+    "class": "college",
+    "university": "college",
+    "shopping": "casual",
+    "mall": "casual",
+    "city exploration": "casual"
+  },
+  "occasions": {
+    "casual": {
+      "dress_code": "casual",
+      "formality": 1,
+      "query_word": "casual",
+      "palette": [
+        "white",
+        "black",
+        "grey",
+        "cream",
+        "navy",
+        "blue",
+        "green"
+      ],
+      "negative_keywords": [
+        "bridal",
+        "wedding",
+        "formal",
+        "cocktail",
+        "party wear"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "medium"
+    },
+    "work": {
+      "dress_code": "business_casual",
+      "formality": 3,
+      "query_word": "office wear",
+      "palette": [
+        "navy",
+        "white",
+        "grey",
+        "black",
+        "cream",
+        "blue"
+      ],
+      "negative_keywords": [
+        "bridal",
+        "wedding",
+        "lehenga",
+        "sequin",
+        "party",
+        "club",
+        "streetwear",
+        "festival wear"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "low",
+      "title_reject": [
+        "bridal",
+        "wedding wear",
+        "lehenga",
+        "sherwani",
+        "sangeet",
+        "cocktail dress",
+        "saree",
+        "salwar",
+        "anarkali",
+        "crop top",
+        "ripped",
+        "hoodie",
+        "loungewear"
+      ]
+    },
+    "interview": {
+      "dress_code": "business_formal",
+      "formality": 4,
+      "query_word": "formal office wear",
+      "palette": [
+        "navy",
+        "white",
+        "grey",
+        "black",
+        "cream"
+      ],
+      "negative_keywords": [
+        "party",
+        "club",
+        "streetwear",
+        "bridal",
+        "wedding"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "low",
+      "title_reject": [
+        "bridal",
+        "lehenga",
+        "sequin",
+        "crop top",
+        "mini skirt",
+        "ripped"
+      ]
+    },
+    "date": {
+      "dress_code": "smart_casual",
+      "formality": 2,
+      "query_word": "stylish",
+      "palette": [
+        "black",
+        "red",
+        "blue",
+        "cream",
+        "white",
+        "green",
+        "pink"
+      ],
+      "negative_keywords": [
+        "wedding",
+        "bridal",
+        "office",
+        "gym",
+        "track pants"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "medium"
+    },
+    "party": {
+      "dress_code": "cocktail",
+      "formality": 3,
+      "query_word": "party wear",
+      "palette": [
+        "black",
+        "red",
+        "pink",
+        "blue",
+        "green",
+        "purple",
+        "gold"
+      ],
+      "negative_keywords": [
+        "bridal",
+        "office",
+        "corporate",
+        "maternity",
+        "kids"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "heavy"
+    },
+    "wedding": {
+      "dress_code": "festive",
+      "formality": 4,
+      "query_word": "wedding",
+      "palette": [
+        "red",
+        "pink",
+        "gold",
+        "yellow",
+        "purple",
+        "cream",
+        "orange",
+        "green"
+      ],
+      "negative_keywords": [
+        "office",
+        "corporate",
+        "interview",
+        "gym",
+        "activewear"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "heavy",
+      "sub_events": {
+        "haldi": {
+          "palette": [
+            "yellow",
+            "mustard",
+            "green",
+            "cream"
+          ],
+          "query_word": "haldi",
+          "light": true
+        },
+        "mehendi": {
+          "palette": [
+            "green",
+            "pink",
+            "orange",
+            "yellow"
+          ],
+          "query_word": "mehendi",
+          "light": true
+        },
+        "sangeet": {
+          "palette": [
+            "red",
+            "pink",
+            "blue",
+            "gold"
+          ],
+          "query_word": "sangeet"
+        },
+        "reception": {
+          "palette": [
+            "cream",
+            "white",
+            "gold",
+            "navy",
+            "pastel"
+          ],
+          "query_word": "reception"
+        },
+        "ceremony": {
+          "palette": [
+            "red",
+            "gold",
+            "maroon"
+          ],
+          "query_word": "wedding"
+        }
+      }
+    },
+    "festive": {
+      "dress_code": "festive",
+      "formality": 3,
+      "query_word": "festive wear",
+      "palette": [
+        "red",
+        "pink",
+        "gold",
+        "yellow",
+        "purple",
+        "cream",
+        "orange",
+        "green"
+      ],
+      "negative_keywords": [
+        "office",
+        "corporate",
+        "gym",
+        "activewear",
+        "kids"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "heavy"
+    },
+    "traditional": {
+      "dress_code": "ceremonial",
+      "formality": 3,
+      "query_word": "traditional wear",
+      "palette": [
+        "cream",
+        "white",
+        "red",
+        "gold",
+        "maroon",
+        "green"
+      ],
+      "negative_keywords": [
+        "party",
+        "club",
+        "gym",
+        "streetwear",
+        "crop top"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "medium",
+      "modesty": true
+    },
+    "travel": {
+      "dress_code": "casual",
+      "formality": 1,
+      "query_word": "travel",
+      "palette": [
+        "blue",
+        "green",
+        "grey",
+        "cream",
+        "black",
+        "white"
+      ],
+      "negative_keywords": [
+        "wedding",
+        "bridal",
+        "formal suit",
+        "stiletto",
+        "heels"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "low",
+      "prefer_fabrics": [
+        "cotton",
+        "linen",
+        "quick dry"
+      ]
+    },
+    "gym": {
+      "dress_code": "sport",
+      "formality": 0,
+      "query_word": "gym",
+      "palette": [
+        "black",
+        "grey",
+        "blue",
+        "pink",
+        "green"
+      ],
+      "negative_keywords": [
+        "formal",
+        "wedding",
+        "saree",
+        "blazer",
+        "ethnic",
+        "party"
+      ],
+      "full_outfit_ok": false,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes"
+      ],
+      "embellishment_max": "none",
+      "title_reject": [
+        "suit",
+        "blazer",
+        "saree",
+        "lehenga",
+        "sherwani",
+        "gown"
+      ]
+    },
+    "beach": {
+      "dress_code": "casual",
+      "formality": 1,
+      "query_word": "beach",
+      "palette": [
+        "white",
+        "cream",
+        "blue",
+        "green",
+        "yellow"
+      ],
+      "negative_keywords": [
+        "winter",
+        "wool",
+        "formal",
+        "wedding",
+        "corporate",
+        "coat"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "low",
+      "prefer_fabrics": [
+        "cotton",
+        "linen"
+      ]
+    },
+    "brunch": {
+      "dress_code": "smart_casual",
+      "formality": 2,
+      "query_word": "brunch",
+      "palette": [
+        "white",
+        "cream",
+        "blue",
+        "pink",
+        "green",
+        "black"
+      ],
+      "negative_keywords": [
+        "bridal",
+        "wedding",
+        "gym",
+        "party",
+        "club"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "low"
+    },
+    "college": {
+      "dress_code": "casual",
+      "formality": 1,
+      "query_word": "casual",
+      "palette": [
+        "black",
+        "white",
+        "blue",
+        "grey",
+        "green",
+        "red"
+      ],
+      "negative_keywords": [
+        "bridal",
+        "wedding",
+        "formal suit",
+        "cocktail",
+        "heels"
+      ],
+      "full_outfit_ok": true,
+      "allowed_slots": [
+        "primary",
+        "bottom",
+        "shoes",
+        "accessory"
+      ],
+      "embellishment_max": "medium"
+    }
+  },
+  "dress_codes": {
+    "casual": {
+      "formality": 1,
+      "footwear": [
+        "sneakers",
+        "sandals",
+        "flip flops",
+        "floaters"
+      ]
+    },
+    "smart_casual": {
+      "formality": 2,
+      "footwear": [
+        "loafers",
+        "sneakers",
+        "block heels",
+        "juttis",
+        "sandals"
+      ]
+    },
+    "business_casual": {
+      "formality": 3,
+      "footwear": [
+        "loafers",
+        "oxford",
+        "derby",
+        "block heels",
+        "flats",
+        "formal sandals"
+      ]
+    },
+    "business_formal": {
+      "formality": 4,
+      "footwear": [
+        "oxford",
+        "derby",
+        "pumps",
+        "block heels",
+        "formal loafers"
+      ]
+    },
+    "cocktail": {
+      "formality": 3,
+      "footwear": [
+        "heels",
+        "fashion sandals",
+        "loafers",
+        "juttis"
+      ]
+    },
+    "festive": {
+      "formality": 3,
+      "footwear": [
+        "juttis",
+        "mojaris",
+        "ethnic heels",
+        "block heels",
+        "kolhapuri"
+      ]
+    },
+    "ceremonial": {
+      "formality": 4,
+      "footwear": [
+        "juttis",
+        "mojaris",
+        "ethnic sandals",
+        "block heels"
+      ]
+    },
+    "sport": {
+      "formality": 0,
+      "footwear": [
+        "running shoes",
+        "training shoes",
+        "sports shoes"
+      ]
+    }
+  },
+  "garments": {
+    "straight_kurta": {
+      "slot": "primary",
+      "formality": 3,
+      "culture": "indian",
+      "office_ok": true,
+      "search": {
+        "female": "straight kurta",
+        "male": "straight kurta"
+      },
+      "detect_categories": [
+        "kurta"
+      ],
+      "detect_keywords": [
+        "straight kurta",
+        "kurti",
+        "kurta"
+      ],
+      "never_with": [
+        "lehenga",
+        "sharara",
+        "gharara",
+        "joggers",
+        "shorts",
+        "skirt"
+      ],
+      "pairs_with": [
+        "cigarette_pants",
+        "straight_trousers",
+        "palazzo",
+        "churidar",
+        "tailored_trousers"
+      ],
+      "embellishment_max": "low"
+    },
+    "kurta_set": {
+      "slot": "full",
+      "formality": 3,
+      "culture": "indian",
+      "office_ok": true,
+      "search": {
+        "female": "kurta set",
+        "male": "kurta pajama"
+      },
+      "detect_categories": [
+        "kurta_set"
+      ],
+      "detect_keywords": [
+        "kurta set",
+        "salwar suit",
+        "ethnic set",
+        "churidar set"
+      ],
+      "never_with": [
+        "jeans",
+        "trousers",
+        "joggers",
+        "shorts",
+        "skirts",
+        "blazer"
+      ],
+      "pairs_with": [
+        "juttis",
+        "mojaris",
+        "block heels",
+        "kolhapuri"
+      ],
+      "embellishment_max": "medium"
+    },
+    "saree": {
+      "slot": "full",
+      "formality": 4,
+      "culture": "indian",
+      "office_ok": true,
+      "search": {
+        "female": "saree",
+        "male": ""
+      },
+      "detect_categories": [
+        "saree"
+      ],
+      "detect_keywords": [
+        "saree",
+        "sari"
+      ],
+      "never_with": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "skirts",
+        "sneakers",
+        "shirt",
+        "tshirt",
+        "polo"
+      ],
+      "pairs_with": [
+        "block_heels",
+        "juttis",
+        "formal_sandals",
+        "structured_bag"
+      ],
+      "requires": [
+        "blouse"
+      ],
+      "embellishment_max": "heavy"
+    },
+    "lehenga": {
+      "slot": "full",
+      "formality": 4,
+      "culture": "indian",
+      "office_ok": false,
+      "search": {
+        "female": "lehenga",
+        "male": ""
+      },
+      "detect_categories": [
+        "lehenga"
+      ],
+      "detect_keywords": [
+        "lehenga",
+        "ghagra",
+        "chaniya choli"
+      ],
+      "never_with": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "skirts",
+        "blazer",
+        "shirt",
+        "sneakers"
+      ],
+      "pairs_with": [
+        "ethnic_heels",
+        "juttis",
+        "clutch",
+        "statement_jewellery"
+      ],
+      "embellishment_max": "heavy"
+    },
+    "anarkali": {
+      "slot": "full",
+      "formality": 4,
+      "culture": "indian",
+      "office_ok": false,
+      "search": {
+        "female": "anarkali suit",
+        "male": ""
+      },
+      "detect_categories": [
+        "kurta_set",
+        "dress"
+      ],
+      "detect_keywords": [
+        "anarkali"
+      ],
+      "never_with": [
+        "jeans",
+        "trousers",
+        "joggers",
+        "shorts",
+        "skirts",
+        "blazer"
+      ],
+      "pairs_with": [
+        "churidar",
+        "ethnic_heels",
+        "juttis",
+        "dupatta"
+      ],
+      "embellishment_max": "heavy"
+    },
+    "sharara_set": {
+      "slot": "full",
+      "formality": 4,
+      "culture": "indian",
+      "office_ok": false,
+      "search": {
+        "female": "sharara set",
+        "male": ""
+      },
+      "detect_categories": [
+        "kurta_set",
+        "dress"
+      ],
+      "detect_keywords": [
+        "sharara",
+        "gharara"
+      ],
+      "never_with": [
+        "trousers",
+        "jeans",
+        "blazer",
+        "sneakers",
+        "shirt"
+      ],
+      "pairs_with": [
+        "ethnic_heels",
+        "juttis",
+        "clutch"
+      ],
+      "embellishment_max": "heavy"
+    },
+    "sherwani": {
+      "slot": "full",
+      "formality": 5,
+      "culture": "indian",
+      "office_ok": false,
+      "search": {
+        "female": "",
+        "male": "sherwani"
+      },
+      "detect_categories": [
+        "sherwani"
+      ],
+      "detect_keywords": [
+        "sherwani",
+        "churidar set"
+      ],
+      "never_with": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "shirt",
+        "tshirt",
+        "polo",
+        "sneakers",
+        "oxford shoes",
+        "derby"
+      ],
+      "pairs_with": [
+        "mojari",
+        "jutti",
+        "churidar",
+        "safa",
+        "stole"
+      ],
+      "embellishment_max": "heavy"
+    },
+    "bandhgala": {
+      "slot": "primary",
+      "formality": 5,
+      "culture": "indian",
+      "office_ok": true,
+      "search": {
+        "female": "",
+        "male": "bandhgala suit"
+      },
+      "detect_categories": [
+        "outerwear",
+        "top"
+      ],
+      "detect_keywords": [
+        "bandhgala",
+        "nehru jacket",
+        "mandarin collar jacket"
+      ],
+      "never_with": [
+        "jeans",
+        "joggers",
+        "shorts",
+        "tshirt",
+        "sneakers",
+        "hoodie"
+      ],
+      "pairs_with": [
+        "tailored_trousers",
+        "churidar",
+        "oxford shoes",
+        "mojari"
+      ],
+      "embellishment_max": "medium"
+    },
+    "nehru_jacket": {
+      "slot": "primary",
+      "formality": 3,
+      "culture": "indian",
+      "office_ok": true,
+      "search": {
+        "female": "",
+        "male": "nehru jacket"
+      },
+      "detect_categories": [
+        "outerwear"
+      ],
+      "detect_keywords": [
+        "nehru jacket",
+        "suit jacket ethnic",
+        "waistcoat ethnic"
+      ],
+      "never_with": [
+        "jeans distressed",
+        "joggers",
+        "shorts",
+        "hoodie",
+        "sneakers running"
+      ],
+      "pairs_with": [
+        "kurta",
+        "formal shirt",
+        "tailored_trousers",
+        "loafers"
+      ],
+      "embellishment_max": "medium"
+    },
+    "dhoti_veshti": {
+      "slot": "bottom",
+      "formality": 4,
+      "culture": "indian",
+      "regional": [
+        "South India",
+        "North India"
+      ],
+      "office_ok": false,
+      "search": {
+        "female": "",
+        "male": "dhoti veshti"
+      },
+      "detect_categories": [
+        "trousers"
+      ],
+      "detect_keywords": [
+        "dhoti",
+        "veshti",
+        "mundu",
+        "panche"
+      ],
+      "never_with": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "suit trousers",
+        "sneakers",
+        "tshirt"
+      ],
+      "pairs_with": [
+        "kurta",
+        "shirt traditional",
+        "mojari",
+        "jutti"
+      ],
+      "embellishment_max": "medium"
+    },
+    "western_shirt": {
+      "slot": "primary",
+      "formality": 3,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "formal shirt women",
+        "male": "formal shirt men"
+      },
+      "detect_categories": [
+        "top",
+        "tshirt",
+        "polo"
+      ],
+      "detect_keywords": [
+        "shirt",
+        "blouse",
+        "button down",
+        "oxford shirt"
+      ],
+      "never_with": [
+        "saree",
+        "lehenga",
+        "sherwani",
+        "dhoti",
+        "shorts",
+        "joggers"
+      ],
+      "pairs_with": [
+        "tailored_trousers",
+        "chinos",
+        "jeans dark",
+        "pencil skirt",
+        "blazer"
+      ],
+      "embellishment_max": "low"
+    },
+    "blazer": {
+      "slot": "primary",
+      "formality": 4,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "blazer women",
+        "male": "blazer men"
+      },
+      "detect_categories": [
+        "outerwear"
+      ],
+      "detect_keywords": [
+        "blazer",
+        "suit jacket"
+      ],
+      "never_with": [
+        "saree heavy",
+        "lehenga",
+        "gym shorts",
+        "hoodie",
+        "track pants",
+        "jeans ripped"
+      ],
+      "pairs_with": [
+        "formal shirt",
+        "tailored_trousers",
+        "pencil skirt",
+        "oxford shoes",
+        "loafers"
+      ],
+      "embellishment_max": "low"
+    },
+    "cigarette_pants": {
+      "slot": "bottom",
+      "formality": 3,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "cigarette pants women",
+        "male": "tailored trousers men"
+      },
+      "detect_categories": [
+        "trousers"
+      ],
+      "detect_keywords": [
+        "cigarette pants",
+        "tailored trousers",
+        "formal trousers",
+        "pencil trousers"
+      ],
+      "never_with": [
+        "saree",
+        "lehenga",
+        "sherwani",
+        "anarkali",
+        "sharara"
+      ],
+      "pairs_with": [
+        "straight_kurta",
+        "formal shirt",
+        "blouse",
+        "loafers",
+        "block heels"
+      ],
+      "embellishment_max": "none"
+    },
+    "chinos": {
+      "slot": "bottom",
+      "formality": 2,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "chinos women",
+        "male": "chinos men"
+      },
+      "detect_categories": [
+        "trousers"
+      ],
+      "detect_keywords": [
+        "chinos",
+        "chino pants"
+      ],
+      "never_with": [
+        "saree",
+        "sherwani",
+        "lehenga",
+        "suit formal"
+      ],
+      "pairs_with": [
+        "oxford shirt",
+        "polo",
+        "casual shirt",
+        "loafers",
+        "sneakers clean"
+      ],
+      "embellishment_max": "none"
+    },
+    "jeans": {
+      "slot": "bottom",
+      "formality": 1,
+      "culture": "western",
+      "office_ok": false,
+      "search": {
+        "female": "jeans women",
+        "male": "jeans men"
+      },
+      "detect_categories": [
+        "jeans"
+      ],
+      "detect_keywords": [
+        "jeans",
+        "denim"
+      ],
+      "never_with": [
+        "saree",
+        "sherwani",
+        "lehenga",
+        "formal blazer",
+        "suit",
+        "dhoti",
+        "kurta formal"
+      ],
+      "pairs_with": [
+        "tshirt",
+        "casual shirt",
+        "sneakers",
+        "hoodie"
+      ],
+      "embellishment_max": "medium"
+    },
+    "palazzo": {
+      "slot": "bottom",
+      "formality": 2,
+      "culture": "indian",
+      "office_ok": true,
+      "search": {
+        "female": "palazzo pants women",
+        "male": ""
+      },
+      "detect_categories": [
+        "trousers"
+      ],
+      "detect_keywords": [
+        "palazzo",
+        "wide leg pants"
+      ],
+      "never_with": [
+        "saree",
+        "lehenga",
+        "sherwani"
+      ],
+      "pairs_with": [
+        "kurta",
+        "kurti",
+        "crop top",
+        "block heels",
+        "kolhapuri"
+      ],
+      "embellishment_max": "low"
+    },
+    "leggings_active": {
+      "slot": "bottom",
+      "formality": 0,
+      "culture": "western",
+      "office_ok": false,
+      "search": {
+        "female": "gym leggings women",
+        "male": "track pants men"
+      },
+      "detect_categories": [
+        "joggers"
+      ],
+      "detect_keywords": [
+        "leggings",
+        "track pants",
+        "joggers",
+        "gym pants"
+      ],
+      "never_with": [
+        "saree",
+        "sherwani",
+        "blazer",
+        "lehenga",
+        "formal shirt",
+        "kurta formal"
+      ],
+      "pairs_with": [
+        "sports bra",
+        "gym tshirt",
+        "running shoes"
+      ],
+      "embellishment_max": "none"
+    },
+    "dress_western": {
+      "slot": "full",
+      "formality": 2,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "midi dress women",
+        "male": ""
+      },
+      "detect_categories": [
+        "dress"
+      ],
+      "detect_keywords": [
+        "dress",
+        "midi dress",
+        "maxi dress",
+        "gown"
+      ],
+      "never_with": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "skirts",
+        "blazer heavy"
+      ],
+      "pairs_with": [
+        "heels",
+        "block heels",
+        "sandals",
+        "loafers",
+        "structured_bag"
+      ],
+      "embellishment_max": "medium"
+    },
+    "co_ord": {
+      "slot": "full",
+      "formality": 2,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "co-ord set women",
+        "male": "co-ord set men"
+      },
+      "detect_categories": [
+        "co-ord"
+      ],
+      "detect_keywords": [
+        "co-ord",
+        "coord set",
+        "matching set"
+      ],
+      "never_with": [
+        "saree",
+        "lehenga",
+        "sherwani"
+      ],
+      "pairs_with": [
+        "sneakers",
+        "loafers",
+        "block heels",
+        "sandals"
+      ],
+      "embellishment_max": "low"
+    },
+    "tshirt": {
+      "slot": "primary",
+      "formality": 1,
+      "culture": "western",
+      "office_ok": false,
+      "search": {
+        "female": "t-shirt women",
+        "male": "t-shirt men"
+      },
+      "detect_categories": [
+        "tshirt",
+        "polo"
+      ],
+      "detect_keywords": [
+        "t-shirt",
+        "tee",
+        "polo"
+      ],
+      "never_with": [
+        "saree",
+        "sherwani",
+        "lehenga",
+        "suit",
+        "dhoti",
+        "formal blazer"
+      ],
+      "pairs_with": [
+        "jeans",
+        "chinos",
+        "joggers",
+        "shorts",
+        "sneakers"
+      ],
+      "embellishment_max": "medium"
+    },
+    "shorts": {
+      "slot": "bottom",
+      "formality": 1,
+      "culture": "western",
+      "office_ok": false,
+      "search": {
+        "female": "shorts women",
+        "male": "shorts men"
+      },
+      "detect_categories": [
+        "shorts"
+      ],
+      "detect_keywords": [
+        "shorts",
+        "cargo shorts",
+        "chino shorts"
+      ],
+      "never_with": [
+        "saree",
+        "sherwani",
+        "lehenga",
+        "suit formal",
+        "blazer"
+      ],
+      "pairs_with": [
+        "tshirt",
+        "shirt casual",
+        "sneakers",
+        "sandals"
+      ],
+      "embellishment_max": "low"
+    },
+    "sandals": {
+      "slot": "shoes",
+      "formality": 1,
+      "culture": "western",
+      "office_ok": false,
+      "search": {
+        "female": "sandals women",
+        "male": "sandals men"
+      },
+      "detect_categories": [
+        "sandals",
+        "shoes"
+      ],
+      "detect_keywords": [
+        "sandals",
+        "flats",
+        "floaters",
+        "flip flops",
+        "slides"
+      ],
+      "never_with": [
+        "saree formal",
+        "sherwani",
+        "lehenga heavy bridal",
+        "gym"
+      ],
+      "pairs_with": [
+        "shorts",
+        "jeans",
+        "casual dress",
+        "kurta"
+      ],
+      "embellishment_max": "low"
+    },
+    "sneakers": {
+      "slot": "shoes",
+      "formality": 1,
+      "culture": "western",
+      "office_ok": false,
+      "search": {
+        "female": "sneakers women",
+        "male": "sneakers men"
+      },
+      "detect_categories": [
+        "shoes",
+        "sandals"
+      ],
+      "detect_keywords": [
+        "sneakers",
+        "running shoes",
+        "trainers",
+        "canvas shoes"
+      ],
+      "never_with": [
+        "saree formal",
+        "sherwani",
+        "lehenga",
+        "suit formal",
+        "bandhgala"
+      ],
+      "pairs_with": [
+        "jeans",
+        "tshirt",
+        "casual shirt",
+        "joggers"
+      ],
+      "embellishment_max": "none"
+    },
+    "oxford_shoes": {
+      "slot": "shoes",
+      "formality": 4,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "oxford shoes women",
+        "male": "oxford shoes men"
+      },
+      "detect_categories": [
+        "shoes",
+        "heels"
+      ],
+      "detect_keywords": [
+        "oxford",
+        "derby",
+        "formal shoes",
+        "lace up shoes"
+      ],
+      "never_with": [
+        "saree casual",
+        "jeans",
+        "shorts",
+        "joggers",
+        "dhoti",
+        "gym"
+      ],
+      "pairs_with": [
+        "formal trousers",
+        "chinos",
+        "suit",
+        "blazer"
+      ],
+      "embellishment_max": "none"
+    },
+    "loafers": {
+      "slot": "shoes",
+      "formality": 3,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "loafers women",
+        "male": "loafers men"
+      },
+      "detect_categories": [
+        "shoes",
+        "sandals"
+      ],
+      "detect_keywords": [
+        "loafers",
+        "penny loafers",
+        "drivers"
+      ],
+      "never_with": [
+        "gym",
+        "saree heavy bridal",
+        "sherwani"
+      ],
+      "pairs_with": [
+        "chinos",
+        "tailored trousers",
+        "jeans dark",
+        "kurta"
+      ],
+      "embellishment_max": "none"
+    },
+    "block_heels": {
+      "slot": "shoes",
+      "formality": 3,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "block heels women",
+        "male": ""
+      },
+      "detect_categories": [
+        "heels",
+        "sandals"
+      ],
+      "detect_keywords": [
+        "block heels",
+        "low heels",
+        "kitten heels"
+      ],
+      "never_with": [
+        "gym",
+        "trekking",
+        "jeans ripped casual"
+      ],
+      "pairs_with": [
+        "cigarette pants",
+        "midi dress",
+        "kurta",
+        "saree"
+      ],
+      "embellishment_max": "low"
+    },
+    "juttis_mojaris": {
+      "slot": "shoes",
+      "formality": 3,
+      "culture": "indian",
+      "office_ok": true,
+      "search": {
+        "female": "juttis women",
+        "male": "mojari men"
+      },
+      "detect_categories": [
+        "shoes",
+        "sandals"
+      ],
+      "detect_keywords": [
+        "jutti",
+        "mojari",
+        "khussa",
+        "traditional sandals"
+      ],
+      "never_with": [
+        "gym",
+        "sneakers",
+        "jeans sport",
+        "track pants",
+        "activewear"
+      ],
+      "pairs_with": [
+        "kurta",
+        "saree",
+        "lehenga",
+        "sherwani",
+        "ethnic wear"
+      ],
+      "embellishment_max": "medium"
+    },
+    "ethnic_heels": {
+      "slot": "shoes",
+      "formality": 4,
+      "culture": "indian",
+      "office_ok": false,
+      "search": {
+        "female": "ethnic heels women",
+        "male": ""
+      },
+      "detect_categories": [
+        "heels",
+        "sandals"
+      ],
+      "detect_keywords": [
+        "ethnic heels",
+        "wedding heels",
+        "embroidered heels"
+      ],
+      "never_with": [
+        "gym",
+        "trekking",
+        "activewear",
+        "jeans sport"
+      ],
+      "pairs_with": [
+        "saree",
+        "lehenga",
+        "anarkali",
+        "sharara"
+      ],
+      "embellishment_max": "medium"
+    },
+    "running_shoes": {
+      "slot": "shoes",
+      "formality": 0,
+      "culture": "western",
+      "office_ok": false,
+      "search": {
+        "female": "running shoes women",
+        "male": "running shoes men"
+      },
+      "detect_categories": [
+        "shoes"
+      ],
+      "detect_keywords": [
+        "running shoes",
+        "training shoes",
+        "sports shoes",
+        "trainers"
+      ],
+      "never_with": [
+        "saree",
+        "sherwani",
+        "lehenga",
+        "suit",
+        "formal",
+        "bandhgala"
+      ],
+      "pairs_with": [
+        "leggings",
+        "track pants",
+        "gym wear",
+        "sports bra"
+      ],
+      "embellishment_max": "none"
+    },
+    "structured_bag": {
+      "slot": "accessory",
+      "formality": 3,
+      "culture": "western",
+      "office_ok": true,
+      "search": {
+        "female": "structured tote bag",
+        "male": "formal office bag"
+      },
+      "detect_categories": [
+        "bag"
+      ],
+      "detect_keywords": [
+        "tote",
+        "handbag",
+        "structured bag",
+        "office bag"
+      ],
+      "never_with": [
+        "gym",
+        "beach",
+        "trekking"
+      ],
+      "pairs_with": [
+        "office wear",
+        "formal",
+        "business"
+      ],
+      "embellishment_max": "low"
+    },
+    "minimal_jewellery": {
+      "slot": "accessory",
+      "formality": 3,
+      "culture": "universal",
+      "office_ok": true,
+      "search": {
+        "female": "minimal gold earrings",
+        "male": "minimal watch"
+      },
+      "detect_categories": [
+        "jewellery",
+        "watch"
+      ],
+      "detect_keywords": [
+        "studs",
+        "hoops",
+        "minimal earrings",
+        "chain",
+        "watch"
+      ],
+      "never_with": [
+        "gym",
+        "sports",
+        "trekking"
+      ],
+      "pairs_with": [
+        "office",
+        "work",
+        "smart casual"
+      ],
+      "embellishment_max": "low"
+    },
+    "statement_jewellery": {
+      "slot": "accessory",
+      "formality": 4,
+      "culture": "indian",
+      "office_ok": false,
+      "search": {
+        "female": "statement earrings",
+        "male": ""
+      },
+      "detect_categories": [
+        "jewellery"
+      ],
+      "detect_keywords": [
+        "jhumka",
+        "statement earrings",
+        "choker",
+        "bold jewellery"
+      ],
+      "never_with": [
+        "gym",
+        "office",
+        "work",
+        "sports",
+        "college"
+      ],
+      "pairs_with": [
+        "wedding",
+        "festive",
+        "party",
+        "sangeet"
+      ],
+      "embellishment_max": "heavy"
+    }
+  },
+  "archetypes": {
+    "female": {
+      "casual": [
+        {
+          "id": "FC-01",
+          "variant": "safe",
+          "label": "Tee + Jeans",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "white",
+                "black",
+                "grey",
+                "cream"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FC-02",
+          "variant": "elevated",
+          "label": "Casual Shirt + Jeans",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "blue",
+                "cream",
+                "green"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "black",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FC-03",
+          "variant": "personality",
+          "label": "Kurta + Jeans Fusion",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "white",
+                "cream",
+                "blue",
+                "green"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white"
+              ]
+            }
+          ]
+        }
+      ],
+      "work": [
+        {
+          "id": "WF-01",
+          "variant": "safe",
+          "label": "Straight Kurta + Cigarette Pants",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "blue",
+                "cream",
+                "white",
+                "green",
+                "pink"
+              ],
+              "fabrics": [
+                "cotton",
+                "linen"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "cream",
+                "black",
+                "navy",
+                "white",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "tan",
+                "black",
+                "nude"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WF-02",
+          "variant": "safe",
+          "label": "Formal Shirt + Tailored Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "blue",
+                "cream",
+                "grey"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey",
+                "cream"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "black",
+                "tan",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WF-06",
+          "variant": "safe",
+          "label": "Blazer + Tailored Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "blazer",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey",
+                "cream"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "nude",
+                "tan"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WF-07",
+          "variant": "elevated",
+          "label": "Formal Shirt + Chinos",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "blue",
+                "pink",
+                "cream"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "navy",
+                "black",
+                "grey",
+                "tan"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "black",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WF-08",
+          "variant": "elevated",
+          "label": "Blouse + Pencil Skirt",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "black",
+                "cream",
+                "blue"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "nude"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WF-03",
+          "variant": "elevated",
+          "label": "Saree + Structured Blouse",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "saree",
+              "colours": [
+                "blue",
+                "cream",
+                "white",
+                "grey",
+                "green"
+              ],
+              "fabrics": [
+                "cotton",
+                "linen"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "nude",
+                "black",
+                "tan"
+              ]
+            },
+            {
+              "slot": "accessory",
+              "garment": "structured_bag",
+              "colours": [
+                "black",
+                "tan",
+                "navy"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WF-04",
+          "variant": "elevated",
+          "label": "Kurta + Blazer + Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "cream",
+                "white",
+                "blue"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "black",
+                "tan"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WF-05",
+          "variant": "personality",
+          "label": "Kurta + Palazzo",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "green",
+                "pink",
+                "blue",
+                "yellow"
+              ],
+              "fabrics": [
+                "cotton",
+                "linen"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "palazzo",
+              "colours": [
+                "cream",
+                "white",
+                "black",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "tan",
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "interview": [
+        {
+          "id": "WI-01",
+          "variant": "safe",
+          "label": "Blazer + Tailored Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "blazer",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "nude"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WI-02",
+          "variant": "safe",
+          "label": "Formal Shirt + Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "blue",
+                "cream"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "oxford_shoes",
+              "colours": [
+                "black",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "WI-03",
+          "variant": "elevated",
+          "label": "Structured Kurta + Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "cream",
+                "white",
+                "blue",
+                "grey"
+              ],
+              "fabrics": [
+                "cotton",
+                "linen"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "tan"
+              ]
+            }
+          ]
+        }
+      ],
+      "date": [
+        {
+          "id": "FD-01",
+          "variant": "safe",
+          "label": "Midi Dress + Block Heels",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "dress_western",
+              "colours": [
+                "black",
+                "red",
+                "blue",
+                "green",
+                "cream"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "nude",
+                "red"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FD-02",
+          "variant": "elevated",
+          "label": "Stylish Top + Jeans + Heels",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "red",
+                "black",
+                "white",
+                "green"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "tan"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FD-03",
+          "variant": "personality",
+          "label": "Co-ord Set",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "co_ord",
+              "colours": [
+                "cream",
+                "green",
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "tan",
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "party": [
+        {
+          "id": "FP-01",
+          "variant": "safe",
+          "label": "Party Dress + Heels",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "dress_western",
+              "colours": [
+                "black",
+                "red",
+                "blue",
+                "green",
+                "purple"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "red",
+                "gold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FP-02",
+          "variant": "elevated",
+          "label": "Statement Top + Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "black",
+                "red",
+                "green",
+                "purple"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "black",
+                "gold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FP-03",
+          "variant": "personality",
+          "label": "Contemporary Saree Look",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "saree",
+              "colours": [
+                "black",
+                "red",
+                "blue",
+                "green"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "ethnic_heels",
+              "colours": [
+                "gold",
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "wedding": [
+        {
+          "id": "FW-01",
+          "variant": "safe",
+          "label": "Kurta Set + Ethnic Footwear",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "kurta_set",
+              "colours": [
+                "red",
+                "pink",
+                "green",
+                "blue",
+                "gold"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "gold",
+                "red",
+                "tan"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FW-02",
+          "variant": "safe",
+          "label": "Saree + Ethnic Heels",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "saree",
+              "colours": [
+                "red",
+                "pink",
+                "gold",
+                "purple",
+                "green"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "ethnic_heels",
+              "colours": [
+                "gold",
+                "red"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FW-03",
+          "variant": "elevated",
+          "label": "Lehenga + Statement Jewellery",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "lehenga",
+              "colours": [
+                "red",
+                "pink",
+                "gold",
+                "blue",
+                "green"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "ethnic_heels",
+              "colours": [
+                "gold",
+                "red"
+              ]
+            },
+            {
+              "slot": "accessory",
+              "garment": "statement_jewellery",
+              "colours": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FW-04",
+          "variant": "personality",
+          "label": "Anarkali + Churidar",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "anarkali",
+              "colours": [
+                "red",
+                "green",
+                "blue",
+                "purple",
+                "pink"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "ethnic_heels",
+              "colours": [
+                "gold",
+                "tan"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FW-05",
+          "variant": "elevated",
+          "label": "Sharara Set",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "sharara_set",
+              "colours": [
+                "pink",
+                "green",
+                "blue",
+                "red"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "ethnic_heels",
+              "colours": [
+                "gold"
+              ]
+            }
+          ]
+        }
+      ],
+      "festive": [
+        {
+          "id": "FF-01",
+          "variant": "safe",
+          "label": "Silk Kurta Set",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "kurta_set",
+              "colours": [
+                "red",
+                "gold",
+                "yellow",
+                "pink",
+                "green"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "gold",
+                "tan"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FF-02",
+          "variant": "elevated",
+          "label": "Saree + Traditional Jewellery",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "saree",
+              "colours": [
+                "red",
+                "gold",
+                "purple",
+                "green",
+                "pink"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "ethnic_heels",
+              "colours": [
+                "gold"
+              ]
+            },
+            {
+              "slot": "accessory",
+              "garment": "statement_jewellery",
+              "colours": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FF-03",
+          "variant": "personality",
+          "label": "Anarkali Festive Look",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "anarkali",
+              "colours": [
+                "yellow",
+                "pink",
+                "green",
+                "red"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "gold"
+              ]
+            }
+          ]
+        }
+      ],
+      "traditional": [
+        {
+          "id": "FT-01",
+          "variant": "safe",
+          "label": "Cotton Saree + Modest Styling",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "saree",
+              "colours": [
+                "cream",
+                "white",
+                "red",
+                "gold",
+                "green"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "tan",
+                "gold"
+              ]
+            },
+            {
+              "slot": "accessory",
+              "garment": "minimal_jewellery",
+              "colours": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FT-02",
+          "variant": "safe",
+          "label": "Kurta Set Modest",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "kurta_set",
+              "colours": [
+                "cream",
+                "white",
+                "green",
+                "blue"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "tan"
+              ]
+            }
+          ]
+        }
+      ],
+      "travel": [
+        {
+          "id": "FTR-01",
+          "variant": "safe",
+          "label": "Cotton Top + Comfy Bottom",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "white",
+                "black",
+                "grey",
+                "blue",
+                "green"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FTR-02",
+          "variant": "elevated",
+          "label": "Linen Shirt + Chinos",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "cream",
+                "blue",
+                "green"
+              ],
+              "fabrics": [
+                "linen",
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "cream",
+                "khaki",
+                "navy",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FTR-03",
+          "variant": "personality",
+          "label": "Co-ord Travel Set",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "co_ord",
+              "colours": [
+                "cream",
+                "blue",
+                "green",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white"
+              ]
+            }
+          ]
+        }
+      ],
+      "gym": [
+        {
+          "id": "FG-01",
+          "variant": "safe",
+          "label": "Activewear Set",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "black",
+                "grey",
+                "blue",
+                "pink"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "leggings_active",
+              "colours": [
+                "black",
+                "grey",
+                "blue"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "running_shoes",
+              "colours": [
+                "black",
+                "white",
+                "grey"
+              ]
+            }
+          ]
+        }
+      ],
+      "beach": [
+        {
+          "id": "FB-01",
+          "variant": "safe",
+          "label": "Beach Dress + Sandals",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "dress_western",
+              "colours": [
+                "white",
+                "cream",
+                "blue",
+                "yellow"
+              ],
+              "fabrics": [
+                "cotton",
+                "linen"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FB-02",
+          "variant": "elevated",
+          "label": "Linen Top + Shorts",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "cream",
+                "blue"
+              ],
+              "fabrics": [
+                "linen"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "shorts",
+              "colours": [
+                "cream",
+                "white",
+                "blue",
+                "khaki"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sandals",
+              "colours": [
+                "tan",
+                "brown"
+              ]
+            }
+          ]
+        }
+      ],
+      "brunch": [
+        {
+          "id": "FBK-01",
+          "variant": "safe",
+          "label": "Casual Dress + Sandals",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "dress_western",
+              "colours": [
+                "white",
+                "cream",
+                "blue",
+                "pink",
+                "green"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "tan",
+                "nude"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FBK-02",
+          "variant": "elevated",
+          "label": "Kurta + Palazzo Brunch",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "green",
+                "pink",
+                "blue",
+                "cream"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "palazzo",
+              "colours": [
+                "cream",
+                "white",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "block_heels",
+              "colours": [
+                "tan"
+              ]
+            }
+          ]
+        }
+      ],
+      "college": [
+        {
+          "id": "FCOL-01",
+          "variant": "safe",
+          "label": "Tee + Jeans + Sneakers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "black",
+                "white",
+                "blue",
+                "green",
+                "red"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "FCOL-02",
+          "variant": "personality",
+          "label": "Casual Kurta + Jeans",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "white",
+                "blue",
+                "green",
+                "yellow"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "male": {
+      "casual": [
+        {
+          "id": "MC-01",
+          "variant": "safe",
+          "label": "Tee + Jeans",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "white",
+                "black",
+                "grey",
+                "navy"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MC-02",
+          "variant": "elevated",
+          "label": "Casual Shirt + Chinos",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "blue",
+                "white",
+                "green",
+                "cream"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "cream",
+                "navy",
+                "grey",
+                "khaki"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "brown",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MC-03",
+          "variant": "personality",
+          "label": "Kurta + Jeans",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "white",
+                "cream",
+                "blue",
+                "green"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan"
+              ]
+            }
+          ]
+        }
+      ],
+      "work": [
+        {
+          "id": "MF-01",
+          "variant": "safe",
+          "label": "Formal Shirt + Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "blue",
+                "cream",
+                "grey"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "oxford_shoes",
+              "colours": [
+                "black",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MF-02",
+          "variant": "safe",
+          "label": "Oxford Shirt + Chinos",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "blue",
+                "white",
+                "pink",
+                "green"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "navy",
+                "cream",
+                "grey",
+                "khaki"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "brown",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MF-03",
+          "variant": "elevated",
+          "label": "Blazer + Shirt + Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "blazer",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "oxford_shoes",
+              "colours": [
+                "black",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MF-04",
+          "variant": "personality",
+          "label": "Kurta + Tailored Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "cream",
+                "white",
+                "blue",
+                "green"
+              ],
+              "fabrics": [
+                "cotton",
+                "linen"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "cream",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "interview": [
+        {
+          "id": "MI-01",
+          "variant": "safe",
+          "label": "Formal Shirt + Trousers + Oxfords",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "blue"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "oxford_shoes",
+              "colours": [
+                "black",
+                "brown"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MI-02",
+          "variant": "elevated",
+          "label": "Blazer Suit Look",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "blazer",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "oxford_shoes",
+              "colours": [
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "date": [
+        {
+          "id": "MD-01",
+          "variant": "safe",
+          "label": "Shirt + Chinos + Loafers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "black",
+                "blue",
+                "green",
+                "white"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "black",
+                "navy",
+                "cream",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "black",
+                "tan",
+                "burgundy"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MD-02",
+          "variant": "elevated",
+          "label": "Polo + Tailored Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "navy",
+                "black",
+                "green",
+                "white"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "navy",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MD-03",
+          "variant": "personality",
+          "label": "Kurta Smart Casual",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "black",
+                "navy",
+                "green",
+                "cream"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "black",
+                "cream",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "party": [
+        {
+          "id": "MP-01",
+          "variant": "safe",
+          "label": "Party Shirt + Trousers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "black",
+                "white",
+                "green",
+                "blue",
+                "red"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MP-02",
+          "variant": "elevated",
+          "label": "Satin Shirt Look",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "black",
+                "green",
+                "burgundy",
+                "navy"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "black",
+                "dark blue"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "black",
+                "white"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MP-03",
+          "variant": "personality",
+          "label": "Bandhgala Party Look",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "bandhgala",
+              "colours": [
+                "black",
+                "navy",
+                "burgundy"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "oxford_shoes",
+              "colours": [
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "wedding": [
+        {
+          "id": "MW-01",
+          "variant": "safe",
+          "label": "Kurta + Churidar + Mojari",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "cream",
+                "gold",
+                "red",
+                "green",
+                "pink",
+                "blue"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "gold",
+                "tan",
+                "red"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MW-02",
+          "variant": "safe",
+          "label": "Kurta + Nehru Jacket",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "nehru_jacket",
+              "colours": [
+                "navy",
+                "burgundy",
+                "green",
+                "gold",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "tan",
+                "gold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MW-03",
+          "variant": "elevated",
+          "label": "Sherwani + Mojari",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "sherwani",
+              "colours": [
+                "gold",
+                "cream",
+                "maroon",
+                "navy",
+                "green"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "gold",
+                "tan"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MW-04",
+          "variant": "elevated",
+          "label": "Bandhgala Suit",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "bandhgala",
+              "colours": [
+                "black",
+                "navy",
+                "burgundy"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "cigarette_pants",
+              "colours": [
+                "black",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "oxford_shoes",
+              "colours": [
+                "black"
+              ]
+            }
+          ]
+        }
+      ],
+      "festive": [
+        {
+          "id": "MFF-01",
+          "variant": "safe",
+          "label": "Kurta Festive",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "cream",
+                "yellow",
+                "red",
+                "green",
+                "orange"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "tan",
+                "gold"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MFF-02",
+          "variant": "elevated",
+          "label": "Kurta + Nehru Jacket Festive",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "nehru_jacket",
+              "colours": [
+                "gold",
+                "burgundy",
+                "green",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "gold"
+              ]
+            }
+          ]
+        }
+      ],
+      "traditional": [
+        {
+          "id": "MT-01",
+          "variant": "safe",
+          "label": "Kurta + Traditional Bottom",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "straight_kurta",
+              "colours": [
+                "cream",
+                "white",
+                "yellow",
+                "green"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "juttis_mojaris",
+              "colours": [
+                "tan"
+              ]
+            }
+          ]
+        }
+      ],
+      "travel": [
+        {
+          "id": "MTR-01",
+          "variant": "safe",
+          "label": "Tee + Jeans + Sneakers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "white",
+                "black",
+                "grey",
+                "blue"
+              ],
+              "fabrics": [
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MTR-02",
+          "variant": "elevated",
+          "label": "Linen Shirt + Chinos",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "cream",
+                "blue",
+                "green"
+              ],
+              "fabrics": [
+                "linen",
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "cream",
+                "khaki",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan"
+              ]
+            }
+          ]
+        }
+      ],
+      "gym": [
+        {
+          "id": "MG-01",
+          "variant": "safe",
+          "label": "Gym Kit",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "black",
+                "grey",
+                "blue",
+                "green"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "leggings_active",
+              "colours": [
+                "black",
+                "grey",
+                "navy"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "running_shoes",
+              "colours": [
+                "black",
+                "white",
+                "red"
+              ]
+            }
+          ]
+        }
+      ],
+      "beach": [
+        {
+          "id": "MB-01",
+          "variant": "safe",
+          "label": "Beach Shirt + Shorts",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "white",
+                "blue",
+                "cream",
+                "green"
+              ],
+              "fabrics": [
+                "linen",
+                "cotton"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "shorts",
+              "colours": [
+                "cream",
+                "khaki",
+                "navy",
+                "white"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sandals",
+              "colours": [
+                "tan",
+                "brown"
+              ]
+            }
+          ]
+        }
+      ],
+      "brunch": [
+        {
+          "id": "MBK-01",
+          "variant": "safe",
+          "label": "Casual Shirt + Chinos",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "western_shirt",
+              "colours": [
+                "blue",
+                "white",
+                "green",
+                "pink"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "chinos",
+              "colours": [
+                "navy",
+                "cream",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "loafers",
+              "colours": [
+                "tan",
+                "brown"
+              ]
+            }
+          ]
+        }
+      ],
+      "college": [
+        {
+          "id": "MCOL-01",
+          "variant": "safe",
+          "label": "Tee + Jeans + Sneakers",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "black",
+                "white",
+                "blue",
+                "red",
+                "green"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white",
+                "black"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "MCOL-02",
+          "variant": "personality",
+          "label": "Oversized Tee + Jeans",
+          "components": [
+            {
+              "slot": "primary",
+              "garment": "tshirt",
+              "colours": [
+                "black",
+                "white",
+                "grey",
+                "green"
+              ]
+            },
+            {
+              "slot": "bottom",
+              "garment": "jeans",
+              "colours": [
+                "blue",
+                "black",
+                "grey"
+              ]
+            },
+            {
+              "slot": "shoes",
+              "garment": "sneakers",
+              "colours": [
+                "white"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "hard_exclusions": [
+    {
+      "a_categories": [
+        "saree"
+      ],
+      "b_categories": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "skirt"
+      ],
+      "reason": "Saree is a complete primary garment — never pair with separate bottoms"
+    },
+    {
+      "a_categories": [
+        "lehenga"
+      ],
+      "b_categories": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "skirt"
+      ],
+      "reason": "Lehenga is a complete primary garment"
+    },
+    {
+      "a_categories": [
+        "sherwani"
+      ],
+      "b_categories": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "shirt",
+        "tshirt",
+        "polo"
+      ],
+      "reason": "Sherwani is a complete traditional outfit"
+    },
+    {
+      "a_categories": [
+        "dress",
+        "co-ord"
+      ],
+      "b_categories": [
+        "trousers",
+        "jeans",
+        "joggers",
+        "shorts",
+        "skirt"
+      ],
+      "reason": "Full outfits do not take separate bottoms"
+    },
+    {
+      "a_categories": [
+        "outerwear"
+      ],
+      "b_categories": [
+        "joggers",
+        "shorts"
+      ],
+      "reason": "Formal outerwear incompatible with active bottoms"
+    },
+    {
+      "a_categories": [
+        "saree",
+        "lehenga",
+        "sherwani"
+      ],
+      "b_categories": [
+        "shoes"
+      ],
+      "b_keywords": [
+        "sneakers",
+        "running",
+        "training"
+      ],
+      "reason": "Ethnic formals need ethnic/formal footwear",
+      "soft": true
+    },
+    {
+      "a_categories": [
+        "trousers"
+      ],
+      "b_categories": [
+        "saree",
+        "lehenga"
+      ],
+      "reason": "See saree/lehenga rules"
+    }
+  ],
+  "occasion_category_gates": {
+    "work": {
+      "reject_categories": [
+        "lehenga",
+        "sherwani",
+        "saree",
+        "anarkali",
+        "sharara",
+        "salwar"
+      ],
+      "reject_title_keywords": [
+        "bridal",
+        "lehenga",
+        "sherwani",
+        "sangeet",
+        "cocktail",
+        "sequin gown",
+        "party wear",
+        "wedding",
+        "saree",
+        "salwar",
+        "anarkali",
+        "ethnic wear",
+        "kurta set",
+        "crop top",
+        "ripped",
+        "hoodie",
+        "loungewear",
+        "pyjama",
+        "nightwear"
+      ],
+      "reject_if_embellishment": "heavy"
+    },
+    "interview": {
+      "reject_categories": [
+        "lehenga",
+        "sherwani",
+        "saree",
+        "anarkali",
+        "sharara",
+        "salwar"
+      ],
+      "reject_title_keywords": [
+        "bridal",
+        "lehenga",
+        "sherwani",
+        "party",
+        "club",
+        "crop",
+        "ripped",
+        "sequin",
+        "wedding",
+        "saree",
+        "salwar",
+        "anarkali",
+        "ethnic wear",
+        "kurta",
+        "hoodie",
+        "t-shirt",
+        "tshirt"
+      ],
+      "reject_if_embellishment": "medium"
+    },
+    "gym": {
+      "reject_categories": [
+        "saree",
+        "lehenga",
+        "dress",
+        "outerwear",
+        "sherwani",
+        "co-ord",
+        "anarkali",
+        "sharara"
+      ],
+      "reject_title_keywords": [
+        "suit",
+        "blazer",
+        "saree",
+        "lehenga",
+        "sherwani",
+        "gown",
+        "formal",
+        "office",
+        "kurta",
+        "trousers",
+        "heel"
+      ],
+      "reject_if_embellishment": "low"
+    },
+    "beach": {
+      "reject_title_keywords": [
+        "wool",
+        "coat",
+        "blazer",
+        "suit",
+        "wedding",
+        "formal trousers"
+      ],
+      "reject_if_embellishment": "heavy"
+    },
+    "casual": {
+      "reject_title_keywords": [
+        "bridal",
+        "sherwani",
+        "sangeet",
+        "wedding lehenga"
+      ],
+      "reject_if_embellishment": "heavy"
+    },
+    "college": {
+      "reject_title_keywords": [
+        "bridal",
+        "sherwani",
+        "sangeet",
+        "cocktail",
+        "wedding"
+      ],
+      "reject_if_embellishment": "heavy"
+    },
+    "traditional": {
+      "reject_title_keywords": [
+        "club",
+        "party wear",
+        "gym",
+        "activewear",
+        "bikini"
+      ],
+      "reject_if_embellishment": "heavy"
+    }
+  },
+  "style_attributes": {
+    "minimalist": {
+      "query_terms": [
+        "minimal",
+        "solid"
+      ],
+      "avoid_title": [
+        "print",
+        "floral",
+        "graphic",
+        "sequin",
+        "embroidered"
+      ],
+      "palette": [
+        "white",
+        "black",
+        "grey",
+        "cream",
+        "navy"
+      ]
+    },
+    "streetwear": {
+      "query_terms": [
+        "oversized",
+        "relaxed fit"
+      ],
+      "avoid_title": [
+        "formal",
+        "tailored"
+      ],
+      "palette": [
+        "black",
+        "grey",
+        "white",
+        "green"
+      ]
+    },
+    "classic": {
+      "query_terms": [
+        "classic fit",
+        "tailored"
+      ],
+      "avoid_title": [
+        "sequin",
+        "graphic",
+        "distressed"
+      ],
+      "palette": [
+        "navy",
+        "white",
+        "cream",
+        "brown",
+        "grey"
+      ]
+    },
+    "corporate": {
+      "query_terms": [
+        "office",
+        "formal",
+        "tailored"
+      ],
+      "avoid_title": [
+        "print",
+        "floral",
+        "graphic",
+        "sequin",
+        "oversized",
+        "cargo"
+      ],
+      "palette": [
+        "navy",
+        "white",
+        "grey",
+        "black"
+      ]
+    },
+    "ethnic": {
+      "query_terms": [
+        "ethnic",
+        "traditional"
+      ],
+      "avoid_title": [
+        "western",
+        "denim"
+      ],
+      "palette": [
+        "red",
+        "gold",
+        "green",
+        "cream",
+        "pink"
+      ]
+    },
+    "indo-western": {
+      "query_terms": [
+        "indo western",
+        "fusion"
+      ],
+      "avoid_title": [],
+      "palette": [
+        "cream",
+        "navy",
+        "gold",
+        "black"
+      ]
+    },
+    "western": {
+      "query_terms": [
+        "western",
+        "modern"
+      ],
+      "avoid_title": [
+        "lehenga",
+        "saree",
+        "sherwani",
+        "bridal"
+      ],
+      "palette": [
+        "black",
+        "white",
+        "navy",
+        "grey",
+        "cream"
+      ]
+    },
+    "fusion": {
+      "query_terms": [
+        "indo western",
+        "fusion"
+      ],
+      "avoid_title": [
+        "bridal"
+      ],
+      "palette": [
+        "cream",
+        "navy",
+        "gold",
+        "black"
+      ]
+    },
+    "smart": {
+      "query_terms": [
+        "office",
+        "formal",
+        "tailored"
+      ],
+      "avoid_title": [
+        "print",
+        "graphic",
+        "sequin",
+        "oversized",
+        "cargo"
+      ],
+      "palette": [
+        "navy",
+        "white",
+        "grey",
+        "black"
+      ]
+    },
+    "old money": {
+      "query_terms": [
+        "classic",
+        "tailored"
+      ],
+      "avoid_title": [
+        "graphic",
+        "sequin",
+        "logo"
+      ],
+      "palette": [
+        "cream",
+        "navy",
+        "white",
+        "brown",
+        "green"
+      ]
+    },
+    "boho": {
+      "query_terms": [
+        "floral",
+        "flowy"
+      ],
+      "avoid_title": [
+        "formal",
+        "tailored"
+      ],
+      "palette": [
+        "cream",
+        "brown",
+        "green",
+        "pink",
+        "orange"
+      ]
+    },
+    "glam": {
+      "query_terms": [
+        "sequin",
+        "satin"
+      ],
+      "avoid_title": [
+        "cotton basic"
+      ],
+      "palette": [
+        "black",
+        "red",
+        "pink",
+        "purple"
+      ]
+    },
+    "athleisure": {
+      "query_terms": [
+        "dry fit",
+        "active"
+      ],
+      "avoid_title": [
+        "formal",
+        "wool"
+      ],
+      "palette": [
+        "black",
+        "grey",
+        "blue"
+      ]
+    },
+    "resort": {
+      "query_terms": [
+        "linen",
+        "breezy"
+      ],
+      "avoid_title": [
+        "wool",
+        "heavy"
+      ],
+      "palette": [
+        "cream",
+        "white",
+        "blue",
+        "green"
+      ]
+    },
+    "y2k": {
+      "query_terms": [
+        "y2k",
+        "crop"
+      ],
+      "avoid_title": [
+        "formal"
+      ],
+      "palette": [
+        "pink",
+        "purple",
+        "blue"
+      ]
+    },
+    "cottagecore": {
+      "query_terms": [
+        "floral",
+        "puff sleeve"
+      ],
+      "avoid_title": [
+        "leather",
+        "studded"
+      ],
+      "palette": [
+        "cream",
+        "pink",
+        "green",
+        "white"
+      ]
+    }
+  },
+  "climate_rules": {
+    "hot": {
+      "prefer_fabrics": [
+        "cotton",
+        "linen"
+      ],
+      "avoid_fabrics": [
+        "wool",
+        "velvet",
+        "leather",
+        "fleece"
+      ]
+    },
+    "humid": {
+      "prefer_fabrics": [
+        "cotton",
+        "linen"
+      ],
+      "avoid_fabrics": [
+        "wool",
+        "velvet",
+        "polyester"
+      ]
+    },
+    "mild": {
+      "prefer_fabrics": [
+        "cotton"
+      ],
+      "avoid_fabrics": []
+    },
+    "cold": {
+      "prefer_fabrics": [
+        "wool",
+        "knit"
+      ],
+      "avoid_fabrics": [
+        "chiffon"
+      ]
+    },
+    "rainy": {
+      "prefer_fabrics": [
+        "quick dry"
+      ],
+      "avoid_fabrics": [
+        "silk pure",
+        "suede"
+      ]
+    }
+  },
+  "colour_rules": {
+    "corporate_combos": [
+      [
+        "navy",
+        "white"
+      ],
+      [
+        "grey",
+        "blue"
+      ],
+      [
+        "beige",
+        "white"
+      ],
+      [
+        "charcoal",
+        "light blue"
+      ],
+      [
+        "black",
+        "white"
+      ]
+    ],
+    "festive_jewel_tones": [
+      "red",
+      "emerald",
+      "royal blue",
+      "maroon",
+      "mustard",
+      "purple",
+      "gold"
+    ],
+    "summer_palettes": [
+      "white",
+      "cream",
+      "pastel",
+      "sky blue",
+      "sage",
+      "beige"
+    ],
+    "evening_palettes": [
+      "black",
+      "burgundy",
+      "emerald",
+      "navy",
+      "deep purple",
+      "gold"
+    ],
+    "neutrals": [
+      "white",
+      "black",
+      "grey",
+      "cream",
+      "navy",
+      "beige"
+    ]
+  },
+  "regional_garments": {
+    "kerala": {
+      "garments": [
+        "kasavu saree",
+        "set mundu"
+      ],
+      "occasions": [
+        "festive",
+        "traditional"
+      ]
+    },
+    "tamil_nadu": {
+      "garments": [
+        "kanjeevaram saree",
+        "pavadai davani"
+      ],
+      "occasions": [
+        "wedding",
+        "traditional"
+      ]
+    },
+    "karnataka": {
+      "garments": [
+        "ilkal saree",
+        "mysore silk"
+      ],
+      "occasions": [
+        "wedding",
+        "traditional"
+      ]
+    },
+    "bengal": {
+      "garments": [
+        "tant saree",
+        "jamdani",
+        "baluchari"
+      ],
+      "occasions": [
+        "festive",
+        "traditional"
+      ]
+    },
+    "assam": {
+      "garments": [
+        "mekhela chador"
+      ],
+      "occasions": [
+        "traditional",
+        "wedding"
+      ]
+    },
+    "punjab": {
+      "garments": [
+        "phulkari",
+        "patiala suit"
+      ],
+      "occasions": [
+        "festive",
+        "wedding"
+      ]
+    },
+    "gujarat": {
+      "garments": [
+        "ghagra choli",
+        "bandhani",
+        "lehariya"
+      ],
+      "occasions": [
+        "festive",
+        "wedding"
+      ]
+    },
+    "rajasthan": {
+      "garments": [
+        "ghagra choli",
+        "bandhani",
+        "lehariya"
+      ],
+      "occasions": [
+        "festive",
+        "wedding"
+      ]
+    },
+    "maharashtra": {
+      "garments": [
+        "nauvari saree",
+        "paithani"
+      ],
+      "occasions": [
+        "traditional",
+        "wedding"
+      ]
+    },
+    "kashmir": {
+      "garments": [
+        "pheran",
+        "kashmiri embroidery"
+      ],
+      "occasions": [
+        "traditional",
+        "casual"
+      ]
+    }
+  },
+  "query_compiler": {
+    "formula": "{gender} {colour} {garment} {fabric} {occasion_word} India",
+    "max_exclusions": 5,
+    "exclusion_prefix": "-",
+    "relaxation_levels": [
+      {
+        "level": 0,
+        "drop": [],
+        "description": "Exact: colour + fabric + garment + occasion"
+      },
+      {
+        "level": 1,
+        "drop": [
+          "fabric"
+        ],
+        "description": "Drop fabric specificity"
+      },
+      {
+        "level": 2,
+        "drop": [
+          "fabric",
+          "colour"
+        ],
+        "description": "Drop colour specificity"
+      },
+      {
+        "level": 3,
+        "drop": [
+          "fabric",
+          "colour",
+          "occasion_word"
+        ],
+        "description": "Broaden to category"
+      }
+    ],
+    "never_relax": [
+      "gender",
+      "garment_core"
+    ],
+    "slot_budget": {
+      "safe": {
+        "primary": 1,
+        "bottom": 1,
+        "shoes": 1
+      },
+      "search_plan": [
+        "primary",
+        "bottom",
+        "shoes"
+      ]
+    },
+    "blueprint_plan": [
+      {
+        "blueprint": 0,
+        "slots": [
+          "primary",
+          "bottom",
+          "shoes"
+        ]
+      },
+      {
+        "blueprint": 1,
+        "slots": [
+          "primary",
+          "bottom"
+        ]
+      },
+      {
+        "blueprint": 2,
+        "slots": [
+          "primary"
+        ]
+      }
+    ]
+  },
+  "confidence_thresholds": {
+    "min_display": 0.45,
+    "high": 0.75,
+    "medium": 0.55,
+    "hard_score_floor": {
+      "occasion": 0.35,
+      "garment_compatibility": 0.5,
+      "formality": 0.4,
+      "cultural": 0.5
+    }
+  },
+  "vton_slot_priority": [
+    "full",
+    "primary",
+    "bottom",
+    "shoes"
+  ],
+  "vton_exclude_slots": [
+    "accessory"
+  ]
+}

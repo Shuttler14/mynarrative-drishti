@@ -24,6 +24,7 @@ from api.services.price_intelligence import (
     price_distribution,
     resolve_band,
 )
+from api.services import fashion_rules as frules
 
 logger = logging.getLogger("drishti.reco.fashion")
 
@@ -88,18 +89,28 @@ _PATTERNS: list[tuple[str, list[str]]] = [
 _CATEGORY_RULES: list[tuple[str, str, str, bool]] = [
     (r"\bt[- ]?shirts?\b|\btees?\b", "tshirt", "top", True),
     (r"\bpolos?\b", "polo", "top", True),
-    (r"\bkurta\b|\bkurti\b|\bsalwar\b|\bchuridar\b|\bsuit set\b|\bethnic set\b", "kurta_set", "full", True),
+    # Footwear BEFORE ethnic body garments so "ethnic jutti shoes" never becomes sherwani
+    (r"\bjuttis?\b|\bmojaris?\b|\bmojari\b|\bmojri\b|\bkhussa\b|\bkolhapuri\b|\bchappal\b|\bslip[- ]?ons?\b|\bfootwear\b|\bpumps?\b", "shoes", "shoes", False),
+    # Full multi-garment sets BEFORE trousers so "Kurta Palazzo Set" stays full, not bottom
+    (r"\bkurta set\b|\bsalwar\b|\bchuridar set\b|\bsuit set\b|\bethnic set\b|\bkurta pajama\b|\bkurta palazzo\b|\bkurti palazzo\b", "kurta_set", "full", True),
+    # Bottoms BEFORE kurta/shirt so "Kurti Pants" / "shirt with trousers" classify correctly
+    (r"\bjeans?\b|\bdenim pants?\b", "jeans", "bottom", False),
+    (r"\btrousers?\b|\bpants?\b|\bchinos?\b|\bpalazzos?\b|\bcigarette pants?\b|\bkurti pants?\b|\bkurta pants?\b|\bkurti pant\b|\bkurta pant\b", "trousers", "bottom", False),
+    (r"\bjoggers?\b|\btrack ?pants?\b|\bsweatpants?\b|\bleggings?\b|\btights?\b|\bjeggings?\b", "joggers", "bottom", False),
+    (r"\bshorts?\b|\bcapri\b", "shorts", "bottom", False),
+    (r"\bskirts?\b", "skirt", "bottom", False),
+    (r"\bsherwanis?\b", "sherwani", "full", True),
+    (r"\bdhoti\b|\bveshti\b|\bmundu\b|\bpanche\b", "dhoti", "bottom", True),
+    (r"\banarkali\b", "anarkali", "full", True),
+    (r"\bsharara\b|\bgharara\b", "sharara", "full", True),
+    (r"\bkurta\b|\bkurti\b", "kurta", "top", True),
     (r"\bsarees?\b|\bsari\b", "saree", "full", True),
     (r"\blehengas?\b|\bghagra\b|\bchaniya choli\b", "lehenga", "full", True),
     (r"\bdress(es)?\b|\bfrock\b|\bgown\b|\bmaxi\b|\bmidi\b|\bjumpsuit\b|\bromper\b|\bplaysuit\b", "dress", "full", True),
     (r"\bco[- ]?ord\b|\bcoord set\b", "co-ord", "full", True),
-    (r"\bblazers?\b|\bjackets?\b|\bcoats?\b|\bshrugs?\b|\bcardigans?\b|\bhoodies?\b|\bsweatshirts?\b|\bsweaters?\b|\bpullovers?\b", "outerwear", "top", True),
+    (r"\bblazers?\b|\bnehru jacket\b|\bbandhgala\b|\bwaistcoat\b|\bjackets?\b|\bcoats?\b|\bshrugs?\b|\bcardigans?\b|\bhoodies?\b|\bsweatshirts?\b|\bsweaters?\b|\bpullovers?\b", "outerwear", "top", True),
+    # Generic shirt/top AFTER bottoms so multi-garment titles keep the bottom slot
     (r"\bshirts?\b|\bblouses?\b|\btops?\b|\btunics?\b", "top", "top", True),
-    (r"\bjeans?\b|\bdenim pants?\b", "jeans", "bottom", False),
-    (r"\btrousers?\b|\bpants?\b|\bchinos?\b|\bpalazzos?\b|\bcigarette pants?\b", "trousers", "bottom", False),
-    (r"\bjoggers?\b|\btrack ?pants?\b|\bsweatpants?\b|\bleggings?\b|\btights?\b|\bjeggings?\b", "joggers", "bottom", False),
-    (r"\bshorts?\b|\bcapri\b", "shorts", "bottom", False),
-    (r"\bskirts?\b", "skirt", "bottom", False),
     (r"\bheels?\b|\bpumps?\b|\bstilettos?\b|\bwedges?\b", "heels", "shoes", False),
     (r"\bsandals?\b|\bflats?\b|\bballerinas?\b|\bslides?\b|\bflip[- ]?flops?\b", "sandals", "shoes", False),
     (r"\bsneakers?\b|\bloafers?\b|\boxfords?\b|\bshoes?\b|\brunning shoes?\b", "shoes", "shoes", False),
@@ -149,6 +160,7 @@ _OCCASION_LEXICON: dict[str, dict[str, int]] = {
     "brunch": {"top": 1, "dress": 1, "linen": 1, "sneaker": 1, "shirt": 1},
     "college": {"t-shirt": 2, "tshirt": 2, "jeans": 2, "sneaker": 1, "oversized": 1},
     "interview": {"formal": 3, "blazer": 3, "trousers": 2, "shirt": 2, "button down": 2},
+    "traditional": {"kurta": 3, "saree": 3, "ethnic": 3, "traditional": 3, "temple": 2, "cotton": 1},
 }
 
 _STYLE_CONFLICTS: dict[str, list[str]] = {
@@ -308,6 +320,7 @@ def build_intent(
     budget_max: float | None = None,
     budget_point: float | None = None,
     budget_tolerance_pct: float = 20.0,
+    user_prefs: dict | None = None,
 ) -> dict:
     """Normalise a user request into a structured fashion intent.
 
@@ -317,6 +330,8 @@ def build_intent(
       level  → value / contemporary / premium / luxury (resolved against the
                live price distribution at recommendation time)
       legacy → old price_segment / price_range slabs (backward compatible)
+    user_prefs: soft Fashion DNA preferences (wear_weights, vibes, brands,
+    adventure_level). Never overrides hard occasion/dress_code gates.
     """
     occasion = (occasion or "casual").strip().lower()
     style = (style or "").strip().lower()
@@ -325,6 +340,28 @@ def build_intent(
         gender = "female"
     elif gender in ("man", "boy", "m"):
         gender = "male"
+
+    # Canonical occasion + dress code from the rules engine
+    occasion_canonical = frules.canonicalize_occasion(occasion)
+    sub_event = frules.resolve_sub_event(occasion)
+    dress_code = frules.resolve_dress_code(occasion_canonical, style)
+    style_terms = frules.style_query_terms(style)
+
+    # Soft style bias from prefs (does not replace explicit request style)
+    prefs = user_prefs or {}
+    wear_weights = prefs.get("wear_weights") or {}
+    vibes = prefs.get("vibes") or []
+    # Strong single-culture preference can seed style terms when none given
+    if not style_terms and wear_weights:
+        top_wear = max(wear_weights, key=lambda k: wear_weights.get(k) or 0) if wear_weights else ""
+        top_val = float(wear_weights.get(top_wear) or 0)
+        if top_val >= 0.75:
+            if top_wear == "western" and occasion_canonical in ("work", "interview", "date", "casual"):
+                style_terms = frules.style_query_terms("corporate") or ["tailored"]
+            elif top_wear == "indian" and occasion_canonical in ("wedding", "festive", "traditional"):
+                style_terms = frules.style_query_terms("ethnic") or ["ethnic"]
+            elif top_wear == "indo_western":
+                style_terms = frules.style_query_terms("indo-western") or ["fusion"]
 
     level = (budget_level or "").strip().lower()
     if level in ("budget", "cheap", "affordable"):
@@ -363,10 +400,27 @@ def build_intent(
         condition = "hot" if temp >= 28 else "cold" if temp <= 15 else "mild"
 
     palette: set[str] = set(_STYLE_PALETTES.get(style, set()))
-    palette |= _OCCASION_PALETTES.get(occasion, set())
+    palette |= _OCCASION_PALETTES.get(occasion_canonical, set()) or \
+        set(frules.occasion_config(occasion_canonical).get("palette", []))
 
-    return {
-        "occasion": occasion,
+    # Vibe → style colour lexicon soft merge (never drops occasion palette)
+    for vibe in vibes:
+        v = str(vibe).strip().lower()
+        if v in _STYLE_PALETTES:
+            palette |= set(_STYLE_PALETTES[v])
+
+    # Merge preference brands into request brands (union)
+    pref_brands = [str(b).strip().lower() for b in (prefs.get("brands") or []) if b]
+    merged_brands = list(dict.fromkeys(
+        [b.strip().lower() for b in (brands or []) if b and b.strip()] + pref_brands
+    ))
+
+    intent = {
+        "occasion": occasion_canonical,
+        "occasion_raw": occasion,
+        "sub_event": sub_event,
+        "dress_code": dress_code,
+        "style_query_terms": style_terms,
         "style": style,
         "gender": gender,
         "band": band,
@@ -380,9 +434,15 @@ def build_intent(
         "avoid_fabrics": _AVOID_FABRICS.get(condition, []),
         "palette": palette,
         "city": city,
-        "brands": [b.strip().lower() for b in (brands or []) if b and b.strip()],
+        "brands": merged_brands,
         "body_shape": "",
+        # Fashion DNA soft prefs (hard gates ignore these)
+        "user_prefs": prefs,
+        "wear_weights": wear_weights,
+        "vibes": list(vibes),
+        "adventure_level": (prefs.get("adventure_level") or "balanced"),
     }
+    return intent
 
 
 def _segment_to_level(segment: str) -> str:
@@ -503,12 +563,34 @@ _QUERY_VARIATIONS: dict[str, list[str]] = {
 
 import random as _random
 
-def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 4) -> list[tuple[str, str]]:
-    """Generate slot-labelled Google Shopping queries for this intent.
-    
-    Each base query is randomly varied from _QUERY_VARIATIONS so different
-    users (and the same user on different visits) see different products.
+def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 6) -> list[tuple[str, str]]:
+    """Generate slot-labelled Google Shopping queries via the outfit blueprint compiler.
+
+    Flow: intent → outfit archetypes → concrete blueprints → per-slot queries
+    with occasion-aware exclusions. Falls back to legacy static slots if the
+    rules engine returns nothing.
     """
+    try:
+        blueprints = frules.build_outfit_blueprints(intent, n=3)
+        # Preserve any `why` already attached by marketplace_reco
+        prior_why = {
+            b.get("id"): b.get("why", "")
+            for b in (intent.get("blueprints") or [])
+            if isinstance(b, dict)
+        }
+        intent["blueprints"] = [
+            {"id": b["id"], "label": b["label"], "variant": b["variant"],
+             "archetype": b["archetype"], "dress_code": b["dress_code"],
+             "why": prior_why.get(b["id"], frules.explain_blueprint(b, intent))}
+            for b in blueprints
+        ]
+        compiled = frules.compile_blueprint_queries(blueprints, intent, max_queries=max_queries)
+        if compiled:
+            return [(c["slot"], c["query"]) for c in compiled]
+    except Exception as exc:
+        logger.warning(f"Blueprint query compile failed, falling back to static slots: {exc}")
+
+    # ── Legacy static fallback (pre-rules-engine path) ──
     gender = intent.get("gender", "")
     occasion = intent.get("occasion", "casual")
     style = intent.get("style", "")
@@ -529,7 +611,6 @@ def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 4) -> li
         candidates = list(slot_map.get(slot, []))
         for i, base in enumerate(candidates):
             q = base
-            # Apply query variation for diversity
             if base in _QUERY_VARIATIONS:
                 q = _random.choice(_QUERY_VARIATIONS[base])
             if style_mod and i == 0:
@@ -563,7 +644,7 @@ def _match_vocab(text: str, vocab: list[tuple[str, list[str]]]) -> list[str]:
 
 
 def _detect_category(title: str) -> tuple[str, str, bool]:
-    t = f" {title} "
+    t = f" {(title or '').lower()} "
     for pattern, category, slot, vton in _CATEGORY_RULES:
         if re.search(pattern, t):
             return category, slot, vton
@@ -579,13 +660,21 @@ def enrich_product(product: dict) -> dict:
     slot_hint = product.get("query_slot")
     if category == "product" and slot_hint:
         slot = "top" if slot_hint == "primary" else slot_hint
-    elif slot_hint == "bottom" and slot == "top" and category in ("top", "product"):
-        slot = "top"
+    elif slot_hint == "bottom" and category in ("product", "top") and not re.search(
+        r"\b(shirts?|blouses?|t[- ]?tees?|polos?|tunics?)\b", haystack
+    ):
+        # Bottom-query hit with weak/generic top label → keep bottom slot
+        # (strong top nouns still win; "Kurti Pants" already classifies as bottom)
+        if category == "product":
+            slot = "bottom"
+    elif slot_hint == "shoes" and category == "product":
+        slot = "shoes"
 
     colors = _match_vocab(haystack, _COLOR_FAMILIES)
     fabrics = _match_vocab(haystack, _FABRICS)
     fits = _match_vocab(haystack, _FITS)
     patterns = _match_vocab(haystack, _PATTERNS)
+    embellishment = frules.detect_embellishment(title, patterns)
 
     product["fashion"] = {
         "category": category,
@@ -597,6 +686,7 @@ def enrich_product(product: dict) -> dict:
         "fit": fits[0] if fits else "",
         "fits": fits,
         "patterns": patterns,
+        "embellishment": embellishment,
     }
     product["brand"] = extract_brand(product.get("title", ""))
     return product
@@ -632,7 +722,62 @@ def _price_in_band(price: float, band: tuple[float, float] | None) -> bool:
     return lo <= price <= hi
 
 
-def hard_filter(products: list[dict], intent: dict, band: tuple[float, float] | None) -> list[dict]:
+def _office_western_strict(intent: dict) -> bool:
+    """Office/interview + strong western preference → formal western only."""
+    occ = intent.get("occasion", "")
+    if occ not in ("work", "interview", "office"):
+        return False
+    wear = intent.get("wear_weights") or (intent.get("user_prefs") or {}).get("wear_weights") or {}
+    w = float(wear.get("western") or 0)
+    i = float(wear.get("indian") or 0)
+    return w >= 0.75 and w > i
+
+
+def _office_formal_required(intent: dict) -> bool:
+    """Any work/interview/office occasion demands formal-signal titles.
+
+    Applies even without wear chips — "Young root fashion" (no garment
+    nouns, no formal cues) must not pass as office inventory. Ethnic
+    rejection stays gated on _office_western_strict (Indian office wear
+    is still valid when the user didn't ask for western).
+    """
+    return intent.get("occasion", "") in ("work", "interview", "office")
+
+
+# Casual body garments that must never appear in a western office look
+_OFFICE_CASUAL_REJECT = (
+    "t-shirt", "tshirt", "tank top", "camisole", "hoodie", "sweatshirt",
+    "jogger", "track pant", "shorts", "sneaker", "flip flop", "slider",
+    "ripped", "crop top", "pyjama", "loungewear", "nightwear", "denim jacket",
+    "graphic tee", "oversized",
+)
+# Ethnic pieces excluded when user explicitly wants western office
+_OFFICE_ETHNIC_REJECT = (
+    "kurta", "kurti", "saree", "sari", "lehenga", "salwar", "anarkali",
+    "sharara", "gharara", "dhoti", "sherwani", "churidar", "dupatta",
+    "indo-western", "indo western", "juttis", "mojari", "ethnic",
+)
+# Body garments must show at least one formal/office signal (user: "only formal")
+# NOTE: casual rejects (t-shirt/hoodie/...) run FIRST, so bare "shirt" is safe here.
+_OFFICE_FORMAL_SIGNALS = (
+    "formal", "office", "business", "tailored", "blazer", "suit",
+    "trouser", "chino", "pencil", "button-down", "button down", "oxford",
+    "structured", "corporate", "work wear", "workwear", "crisp", "shirting",
+    "cigarette", "wide leg", "straight leg", "dress shirt", "waistcoat",
+    "shirt", "blouse", "loafer", "heel", "flat shoe", "sandal",
+)
+
+
+def hard_filter(
+    products: list[dict],
+    intent: dict,
+    band: tuple[float, float] | None,
+    *,
+    require_formal_signal: bool = True,
+) -> list[dict]:
+    occasion = intent.get("occasion", "casual")
+    strict_western = _office_western_strict(intent)
+    office_formal = _office_formal_required(intent)
     out = []
     for p in products:
         price = p.get("price") or 0
@@ -642,6 +787,29 @@ def hard_filter(products: list[dict], intent: dict, band: tuple[float, float] | 
             continue
         if not _gender_ok(p.get("title", ""), intent.get("gender", "")):
             continue
+        # Hard gate: product must belong to the requested occasion
+        if not frules.occasion_ok(p, occasion):
+            continue
+        if strict_western or office_formal:
+            t = f" {(p.get('title') or '').lower()} "
+            slot = (p.get("fashion") or {}).get("slot", "")
+            if slot in ("shoes", "accessory"):
+                # Footwear: formal-adjacent only (no beach/ethnic/casual sport)
+                if any(k in t for k in ("flip flop", "slider", "jutti", "mojari", "kolhapuri", "sport", "running", "trainer")):
+                    continue
+            else:
+                if any(k in t for k in _OFFICE_CASUAL_REJECT):
+                    continue
+                if strict_western:
+                    # "Kurta placket"/"kurta neck" is a shirt collar detail — not ethnic wear
+                    t_ethnic = t.replace("kurta placket", " ").replace("kurta neckline", " ").replace("kurti neckline", " ")
+                    if any(k in t_ethnic for k in _OFFICE_ETHNIC_REJECT):
+                        continue
+                # Must look formal for office (reject brand-only/noise titles too)
+                if office_formal and require_formal_signal and not any(sig in t for sig in _OFFICE_FORMAL_SIGNALS):
+                    continue
+            if any(k in t for k in ("streetwear", "clubwear", "rave", "festival")):
+                continue
         out.append(p)
     return out
 
@@ -655,19 +823,61 @@ def _widen(band: tuple[float, float] | None) -> tuple[float, float] | None:
     return (max(0, lo * 0.7), hi * 1.4)
 
 
+def _rescue_slot_coverage(pool: list[dict], relevant: list[dict], intent: dict) -> list[dict]:
+    """Pull bottoms/shoes from the gender-filtered pool even if outside the budget band.
+
+    A tight band (e.g. ₹929–2071 from dnaBudget) often eliminates footwear and
+    trousers while leaving cheap tops — which is how office looks became shirts-only.
+    """
+    have = {(p.get("fashion") or {}).get("slot", "") for p in pool}
+    missing = {s for s in ("bottom", "shoes") if s not in have}
+    if not missing:
+        return pool
+
+    occasion = intent.get("occasion", "casual")
+    in_pool = {id(p) for p in pool}
+    added_counts: dict[str, int] = {}
+    extras: list[dict] = []
+    for p in relevant:
+        if not missing:
+            break
+        if id(p) in in_pool:
+            continue
+        slot = (p.get("fashion") or {}).get("slot", "")
+        if slot not in missing:
+            continue
+        if (p.get("price") or 0) <= 0:
+            continue
+        if not frules.occasion_ok(p, occasion):
+            continue
+        extras.append(p)
+        in_pool.add(id(p))
+        added_counts[slot] = added_counts.get(slot, 0) + 1
+        if added_counts[slot] >= 4:
+            missing.discard(slot)
+    if extras:
+        logger.info(
+            "Budget-band rescue added %d items for slots %s",
+            len(extras),
+            sorted(added_counts),
+        )
+    return pool + extras
+
+
 # ══════════════════════════════════════════════════════════════
 # MATCH SCORING
 # ══════════════════════════════════════════════════════════════
 
 _SCORE_WEIGHTS = {
-    "style": 0.25,
-    "occasion": 0.20,
+    "style": 0.20,
+    "occasion": 0.21,
     "fit": 0.15,
     "color": 0.10,
     "budget": 0.10,
-    "quality": 0.10,
-    "popularity": 0.05,
-    "brand": 0.05,
+    "quality": 0.08,
+    "popularity": 0.04,
+    "brand": 0.04,
+    "affinity": 0.08,
 }
 
 
@@ -767,6 +977,94 @@ def _brand_score(p: dict, intent: dict) -> float:
     return 1.0 if any(b in title for b in brands) else 0.0
 
 
+_WESTERN_TITLE_HINTS = (
+    "blazer", "shirt", "trouser", "jean", "chino", "skirt", "dress",
+    "trench", "coat", "jacket", "sweater", "hoodie", "sneaker", "loafer",
+    "oxford", "pump", "heel", "top", "tee", "t-shirt", "crop", "denim",
+)
+_INDIAN_TITLE_HINTS = (
+    "kurta", "kurti", "saree", "sari", "lehenga", "churidar", "sherwani",
+    "dhoti", "anarkali", "salwar", "dupatta", "palazzo ethnic", "juttis",
+    "mojari", "kolhapuri", "bandhgala", "nehru jacket", "indian", "ethnic",
+)
+_INDO_WESTERN_HINTS = (
+    "indo western", "indo-western", "fusion", "kurta with jeans",
+    "kurta dress", "ethnic jacket", "dhoti pants",
+)
+
+
+def _detect_product_culture(p: dict, fashion: dict) -> str:
+    """Best-effort culture label for a product (western/indian/indo_western/universal)."""
+    if fashion.get("culture"):
+        return str(fashion["culture"]).lower()
+    title = (p.get("title") or "").lower()
+    cat = (fashion.get("category") or "").lower()
+    hay = f" {title} {cat} "
+    if any(h in hay for h in _INDO_WESTERN_HINTS):
+        return "indo_western"
+    indian = sum(1 for h in _INDIAN_TITLE_HINTS if h in hay)
+    western = sum(1 for h in _WESTERN_TITLE_HINTS if h in hay)
+    if indian and western:
+        return "indo_western"
+    if indian >= western and indian > 0:
+        return "indian"
+    if western > 0:
+        return "western"
+    return "universal"
+
+
+def _affinity_score(p: dict, intent: dict) -> float:
+    """Soft preference affinity: culture match + vibes + brand + DNA colour.
+
+    0.5 neutral when no prefs present. Hard gates already filtered the pool —
+    this only reorders eligible products.
+    """
+    prefs = intent.get("user_prefs") or {}
+    wear = intent.get("wear_weights") or prefs.get("wear_weights") or {}
+    vibes = intent.get("vibes") or prefs.get("vibes") or []
+    if not wear and not vibes:
+        return 0.5
+
+    f = p.get("fashion") or {}
+    score = 0.5
+
+    culture = _detect_product_culture(p, f)
+    if wear and culture in ("western", "indian", "indo_western"):
+        w = float(wear.get(culture) or 0)
+        # Map preference weight → score contribution around neutral
+        score = 0.35 + 0.65 * w
+        if culture == "universal":
+            score = max(score, 0.55)
+    elif wear:
+        # Unknown culture: slight neutral-high to avoid burying discoveries
+        score = 0.55
+
+    # Vibe lexicon match against title/category/patterns
+    if vibes:
+        hay = f" {(p.get('title') or '').lower()} {f.get('category','')} {' '.join(f.get('patterns') or [])} "
+        vibe_hits = 0
+        for vibe in vibes:
+            v = str(vibe).strip().lower()
+            if not v:
+                continue
+            if v in hay or (v == "minimal" and any(x in hay for x in ("solid", "plain", "classic", "tailored"))) or \
+               (v == "classic" and any(x in hay for x in ("classic", "formal", "tailored", "structured"))) or \
+               (v == "trendy" and any(x in hay for x in ("trendy", "fashion", "latest", "printed"))) or \
+               (v == "smart" and any(x in hay for x in ("smart", "formal", "office", "tailored", "blazer"))) or \
+               (v == "relaxed" and any(x in hay for x in ("relaxed", "casual", "comfort", "soft"))):
+                vibe_hits += 1
+        if vibe_hits:
+            score = min(1.0, score + 0.1 * min(vibe_hits, 2))
+
+    # DNA colour preference
+    dna_colors = (prefs.get("dna") or {}).get("colours") or prefs.get("colors") or []
+    color = (f.get("color") or "").lower()
+    if dna_colors and color and color in {str(c).lower() for c in dna_colors}:
+        score = min(1.0, score + 0.08)
+
+    return max(0.0, min(1.0, score))
+
+
 def score_product(p: dict, intent: dict, band: tuple[float, float] | None,
                   price_lo: float, price_hi: float) -> dict:
     scores = {
@@ -778,6 +1076,7 @@ def score_product(p: dict, intent: dict, band: tuple[float, float] | None,
         "quality": _quality_score(p),
         "popularity": _popularity_score(p),
         "brand": _brand_score(p, intent),
+        "affinity": _affinity_score(p, intent),
     }
     final = sum(scores[k] * _SCORE_WEIGHTS[k] for k in _SCORE_WEIGHTS)
     p["match_scores"] = {k: round(v, 3) for k, v in scores.items()}
@@ -797,8 +1096,19 @@ def _title_key(p: dict) -> frozenset:
 
 
 def _slot_order(count: int) -> list[str]:
-    if count <= 3:
-        return ["top"] * count
+    """Target slot sequence for a flat recommendation list.
+
+    Small counts still reserve room for bottoms/footwear so the UI can
+    assemble a complete look (top + bottom + shoes) whenever inventory allows.
+    """
+    if count <= 0:
+        return []
+    if count == 1:
+        return ["top"]
+    if count == 2:
+        return ["top", "bottom"]
+    if count == 3:
+        return ["top", "bottom", "shoes"]
     order = ["top"] * count
     for pos, slot in {2: "bottom", 4: "shoes", 6: "accessory", 8: "bottom"}.items():
         if pos < count:
@@ -841,7 +1151,11 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
         _random.shuffle(b)
 
     order = _slot_order(count)
-    max_non_top = max(1, count // 3) if count >= 4 else 0
+    # Per-slot caps (not a single combined non-top budget) so shoes aren't
+    # starved after bottoms fill the old max_non_top allowance.
+    max_bottoms = max(1, count // 3) if count >= 2 else 0
+    max_shoes = 1 if count >= 3 else 0
+    max_accessories = 1 if count >= 6 else 0
     selected: list[dict] = []
     used_ids: set[int] = set()
     cat_counts: dict[str, int] = {}
@@ -856,9 +1170,20 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
         # Skip bottom if a full outfit is already selected
         if b == "bottom" and has_full_outfit:
             return False
-        if len([x for x in selected if _bucket(x) != "top"]) >= max_non_top:
+        bottoms = len([x for x in selected if _bucket(x) == "bottom"])
+        shoes = len([x for x in selected if _bucket(x) == "shoes"])
+        accs = len([x for x in selected if _bucket(x) == "accessory"])
+        if b == "bottom" and bottoms >= max_bottoms:
             return False
-        if cat_counts.get(p["fashion"]["category"], 0) >= 2:
+        if b == "shoes" and shoes >= max_shoes:
+            return False
+        if b == "accessory" and accs >= max_accessories:
+            return False
+        # Cap repeated categories — but allow more generic tops so count can fill
+        # (many shirts share category="top"; capping at 2 starved 6-item lists).
+        cat = p["fashion"]["category"]
+        cat_cap = 4 if b == "top" else 2
+        if cat_counts.get(cat, 0) >= cat_cap:
             return False
         return True
 
@@ -869,6 +1194,9 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
             if id(p) in used_ids or not _admissible(p):
                 continue
             if any(_similar(_title_key(p), _title_key(s)) for s in selected):
+                continue
+            # Hard pairing gate: no Frankenstein outfits (saree+pants etc.)
+            if not frules.outfit_pairing_ok(p, selected):
                 continue
             used_ids.add(id(p))
             cat_counts[p["fashion"]["category"]] = cat_counts.get(p["fashion"]["category"], 0) + 1
@@ -885,6 +1213,10 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
         if slot == "bottom" and has_full_outfit:
             continue
         p = take(slot)
+        if p is None and slot in ("bottom", "shoes"):
+            # Never silently replace a missing bottom/shoes with a shirt —
+            # backfill pass below will try again from leftover inventory.
+            continue
         if p is None:
             for b in fill_order:
                 if b == slot:
@@ -898,6 +1230,36 @@ def _diverse_select(scored: list[dict], count: int) -> list[dict]:
             selected.append(p)
         if len(selected) >= count:
             break
+
+    # Backfill missing bottom/shoes when inventory exists (complete-outfit guarantee)
+    for req in ("bottom", "shoes"):
+        if any(_bucket(x) == req for x in selected):
+            continue
+        if req == "bottom" and has_full_outfit:
+            continue
+        # Temporarily relax the per-slot cap for the backfill take
+        if req == "bottom":
+            max_bottoms += 1
+        elif req == "shoes":
+            max_shoes += 1
+        p = take(req)
+        if req == "bottom":
+            max_bottoms -= 1
+        elif req == "shoes":
+            max_shoes -= 1
+        if not p:
+            continue
+        if len(selected) < count:
+            selected.append(p)
+        else:
+            # Replace a trailing non-full top so the list still fits count
+            replace_idx = None
+            for i in range(len(selected) - 1, -1, -1):
+                if _bucket(selected[i]) == "top" and selected[i]["fashion"].get("slot") != "full":
+                    replace_idx = i
+                    break
+            if replace_idx is not None:
+                selected[replace_idx] = p
 
     return selected[:count]
 
@@ -1014,6 +1376,17 @@ def recommend_products(products: list[dict], intent: dict, count: int) -> dict:
     else:
         pool = hard_filter(relevant, intent, None)
 
+    # Rescue missing bottom/shoes inventory lost to a tight budget band
+    pool = _rescue_slot_coverage(pool, relevant, intent)
+
+    if not pool and relevant and _office_formal_required(intent):
+        # Formal-signal gate starved the pool (inventory was all soft/casual
+        # titles). Keep ethnic/casual rejections but drop the must-be-formal
+        # signal so office western still returns outfits instead of 0.
+        pool = hard_filter(relevant, intent, band, require_formal_signal=False)
+        if not pool:
+            pool = hard_filter(relevant, intent, None, require_formal_signal=False)
+
     if not pool and is_level and relevant:
         # Level is a preference, not a hard budget — degrade to the
         # fanciest available items rather than returning nothing.
@@ -1031,6 +1404,16 @@ def recommend_products(products: list[dict], intent: dict, count: int) -> dict:
     selected = _diverse_select(scored, count)
     _assign_labels(selected, count)
 
+    # Validate the assembled selection as an outfit system
+    try:
+        validation = frules.validate_outfit(selected, intent)
+        intent["outfit_validation"] = validation
+        if not validation.get("passed") and validation.get("violations"):
+            logger.info(f"Outfit validation issues: {validation['violations'][:5]}")
+    except Exception as exc:
+        logger.warning(f"Outfit validation failed: {exc}")
+        intent["outfit_validation"] = {"passed": True, "confidence": 0.5, "level": "medium"}
+
     for p in scored:
         p["_reason"] = build_reason(p, intent)
 
@@ -1039,4 +1422,5 @@ def recommend_products(products: list[dict], intent: dict, count: int) -> dict:
         "band": band,
         "distribution": dist,
         "candidates": scored,
+        "validation": intent.get("outfit_validation", {}),
     }

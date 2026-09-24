@@ -519,16 +519,20 @@ def _detect_gender_from_query(query: str) -> str:
 def _query_to_myntra_url(query: str) -> str:
     """Convert a search query to a Myntra category page URL (gender-aware)."""
     q = query.lower().strip()
+    # Exclusions must not drive category choice: "-saree -lehenga" in a formal
+    # query was matching `saree in q` → /sarees, flooding the pool with ethnic
+    # items that hard_filter then rejected (empty recommendations).
+    positive = " ".join(tok for tok in q.split() if not tok.startswith("-"))
     gender = _detect_gender_from_query(q)
     categories = _MYNYTRA_CATEGORIES.get(gender, _MYNYTRA_CATEGORIES["men"])
 
-    # Try exact category match first
-    for keyword, slug in categories.items():
-        if keyword in q:
+    # Longest keyword first so "formal shirt" beats "shirt"
+    for keyword, slug in sorted(categories.items(), key=lambda kv: -len(kv[0])):
+        if keyword in positive:
             return f"https://www.myntra.com/{slug}"
 
-    # Default: use Myntra search
-    return f"https://www.myntra.com/{q.replace(' ', '-')}"
+    # Default: use Myntra search (positive tokens only — '-' breaks the URL)
+    return f"https://www.myntra.com/{positive.replace(' ', '-')}" if positive else "https://www.myntra.com/"
 
 
 async def scrape_myntra(query: str, max_results: int = 10) -> list[dict]:

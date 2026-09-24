@@ -23,6 +23,28 @@ settings = get_settings()
 router = APIRouter()
 
 
+def _humanize_vton_error(detail: str | None) -> str | None:
+    """Map raw Replicate/model errors to user-safe copy."""
+    if not detail:
+        return None
+    d = str(detail)
+    low = d.lower()
+    if "no detections" in low or "no person" in low:
+        return "We couldn't find a person in that photo. Try a clearer full-body or upper-body shot."
+    if "rate limit" in low or "429" in d:
+        return "Try-on is busy right now. Please wait a moment and tap retry."
+    if "timed out" in low or "timeout" in low:
+        return "Try-on took too long. Please retry."
+    if "cannot fetch image" in low or "failed to download" in low:
+        return "We couldn't load one of the garment images. Please retry."
+    if "not set" in low and "token" in low:
+        return "Try-on is temporarily unavailable."
+    # Never surface raw model stack traces
+    if len(d) > 180 or "Traceback" in d or "Error:" in d:
+        return "Try-on failed. Please retry with another photo."
+    return d
+
+
 # ── Widget → Engine payload adapter ──
 
 _MODE_MAP = {
@@ -44,15 +66,17 @@ class WidgetTryOnRequest(BaseModel):
     mode: str = "top"
     user_image: str  # base64 data URI or URL
     garment_image: str  # base64 data URI or URL
+    category: str = "upper_body"  # upper_body | lower_body | dresses | footwear
 
 
 class VTONRequest(BaseModel):
     garment_image_url: str | None = None
     garment_image_urls: list[str] | None = None  # full-look try-on (top+bottom+shoes)
-    person_image_url: str | None = None
+    person_image_url: str  # required — missing photo must 400, not 500
     vto_engine: str = "idm-vton"
     extract_garment: bool = True  # Run garment extraction preprocessing
     seed: int | None = None  # Optional seed to re-roll artifacts on regenerate
+    garment_types: list[str] | None = None  # optional per-garment type hints
 
 
 class VTONJobResponse(BaseModel):
@@ -68,6 +92,7 @@ class VTONJobResponse(BaseModel):
 class ExtractGarmentRequest(BaseModel):
     image_url: str
     upload: bool = True
+    garment_type: str = "auto"  # top|bottom|shoes|full — band-crops on-model shots
 
 
 @router.post("/extract-garment")
@@ -80,7 +105,7 @@ async def extract_garment_endpoint(
     """
     from api.services.garment_extract import extract_garment
 
-    result = await extract_garment(req.image_url, upload=req.upload)
+    result = await extract_garment(req.image_url, upload=req.upload, garment_type=req.garment_type)
 
     if "error" in result:
         raise HTTPException(500, result["error"])
@@ -89,8 +114,10 @@ async def extract_garment_endpoint(
         "original_url": result["original_url"],
         "garment_image": result["garment_image"],
         "processing_time_ms": result["processing_time_ms"],
-        "original_size": result["original_size"],
-        "garment_size": result["garment_size"],
+        # cache hits don't know the source/crop dimensions
+        "original_size": result.get("original_size"),
+        "garment_size": result.get("garment_size"),
+        "cached": result.get("cached", False),
     }
 
 
@@ -123,7 +150,7 @@ async def extract_garment_upload(
 
 # ── Helper: preprocess garment image for VTON ──
 
-async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -> str:
+async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool, garment_type: str = "auto") -> str:
     """Run garment extraction on marketplace images before VTON.
     
     Only extracts from HTTP marketplace URLs (Amazon, Myntra, etc.) that show
@@ -131,6 +158,10 @@ async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -
     - data: URIs (already processed or small thumbnails)
     - /garments/ URLs (already extracted)
     - Google Shopping thumbnails (already flat-lay, just tiny)
+
+    garment_type (top|bottom|shoes|full|auto): limits the kept silhouette to
+    that garment's vertical band — a shirt photo's visible pants must not be
+    handed to VTON or they get painted onto the user too.
     """
     if not should_extract or not garment_url:
         return garment_url
@@ -149,9 +180,12 @@ async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -
         # Send directly to VTON — it's likely already a flat-lay
         return garment_url
 
-    logger.info(f"Extracting garment from marketplace URL: {garment_url[:80]}")
+    from api.services.garment_extract import _norm_garment_type
+    gtype = _norm_garment_type(garment_type)
+
+    logger.info(f"Extracting garment from marketplace URL (type={gtype}): {garment_url[:80]}")
     from api.services.garment_extract import extract_garment
-    result = await extract_garment(garment_url, upload=False)
+    result = await extract_garment(garment_url, upload=False, garment_type=gtype)
     if "error" not in result:
         logger.info(f"Garment extracted successfully: {result.get('garment_size')}")
         return result["garment_image"]
@@ -166,12 +200,21 @@ async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool) -
 async def create_vton_job(
     req: VTONRequest,
     authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    db: AsyncSession = Depends(get_db),
 ):
-    user_id = None
-    if authorization:
-        payload = verify_token(authorization.replace("Bearer ", ""))
-        if payload:
-            user_id = payload["sub"]
+    from api.utils.identity import resolve_user
+
+    user = await resolve_user(
+        db,
+        authorization=authorization,
+        shopify_customer_id=x_shopify_customer_id,
+        create_if_missing=False,
+    )
+    user_id = str(user.id) if user else None
+
+    if not req.person_image_url or not str(req.person_image_url).strip():
+        raise HTTPException(400, "person_image_url is required — upload a photo to try on garments")
 
     # Full-look try-on: top + bottom + shoes in one generation (max 4 garments)
     garment_urls = [u for u in (req.garment_image_urls or []) if u][:4]
@@ -181,66 +224,201 @@ async def create_vton_job(
     if not garment_urls:
         raise HTTPException(400, "garment_image_url or garment_image_urls required")
 
-    # Preprocess garment images (extract from marketplace if needed)
+    # Preprocess garment images (extract from marketplace if needed).
+    # Per-garment type hints from the wizard (slot names) drive the band crop
+    # so only the target garment's silhouette region is handed to VTON.
+    types = list(req.garment_types or [])
     processed = [
-        await _preprocess_garment_for_vton(u, req.extract_garment)
-        for u in garment_urls
+        await _preprocess_garment_for_vton(
+            u,
+            req.extract_garment,
+            garment_type=(types[i] if i < len(types) else "auto"),
+        )
+        for i, u in enumerate(garment_urls)
     ]
 
     from api.services.vton_replicate import create_try_on_job
+
+    # Prefer explicit per-garment types; fall back to "top" for multi-look
+    garment_type = "top"
+    if req.garment_types:
+        garment_type = req.garment_types[0] or "top"
+    elif len(processed) > 1:
+        garment_type = "full"
 
     result = await create_try_on_job(
         person_image_url=req.person_image_url,
         garment_image_url=processed[0],
         garment_image_urls=processed,
-        garment_type="top",
+        garment_type=garment_type,
         seed=req.seed,
     )
 
-    return {
-        "status": result.get("status", "error"),
-        "result_image": result.get("result_image"),
+    # Persist job so /job/{id} and /history work (Fashion DNA high-signal event)
+    job_id = None
+    try:
+        from uuid import UUID
+        try:
+            uid = UUID(user_id) if user_id else None
+        except (TypeError, ValueError):
+            uid = None
+        job = VTONJob(
+            user_id=uid,
+            garment_image=(processed[0] or "")[:2000],
+            person_image=(req.person_image_url or "")[:2000] or None,
+            person_url=(req.person_image_url or "")[:2000] or None,
+            result_image=result.get("result_image"),
+            status=result.get("status", "error"),
+            vto_engine=result.get("engine", "idm-vton"),
+            error_message=result.get("detail") if result.get("status") == "error" else None,
+            processing_time_ms=result.get("processing_time_ms"),
+        )
+        db.add(job)
+        await db.flush()
+        job_id = str(job.id)
+
+        # Record high-signal behavior event for preference updater
+        if user_id and result.get("status") == "completed":
+            from api.models.schema import UserEvent
+            db.add(UserEvent(
+                user_id=uid,
+                event_type="vton_completed",
+                payload={
+                    "job_id": job_id,
+                    "result_image": bool(result.get("result_image")),
+                    "engine": result.get("engine", "idm-vton"),
+                },
+                weight=2.0,
+            ))
+            await db.flush()
+    except Exception:
+        logger.warning("Failed to persist VTON job", exc_info=True)
+        job_id = None
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning("VTON job rollback failed", exc_info=True)
+
+    status = result.get("status", "error")
+    result_image = result.get("result_image")
+    message = _humanize_vton_error(result.get("detail") if status != "completed" else None) or \
+              "VTON completed"
+    resp = {
+        "status": status,
+        "result_image": result_image,
         "processing_time_ms": result.get("processing_time_ms"),
         "quality_score": result.get("quality_score"),
         "engine": result.get("engine", "idm-vton"),
         "garment_extracted": any(p != u for p, u in zip(processed, garment_urls)),
-        "message": result.get("detail", "VTON completed"),
+        "message": message,
     }
+    if job_id:
+        resp["job_id"] = job_id
+    return resp
 
 
 @router.post("/widget/try-on")
 async def widget_try_on(
     req: WidgetTryOnRequest,
     authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Shopify widget endpoint — normalizes payload format before forwarding to Replicate."""
-    user_id = None
-    if authorization:
-        payload = verify_token(authorization.replace("Bearer ", ""))
-        if payload:
-            user_id = payload["sub"]
+    from api.utils.identity import resolve_user
 
-    # Preprocess garment image (extract from marketplace if needed)
-    garment_url = await _preprocess_garment_for_vton(req.garment_image, should_extract=True)
+    user = await resolve_user(
+        db,
+        authorization=authorization,
+        shopify_customer_id=x_shopify_customer_id,
+        create_if_missing=False,
+    )
+    user_id = str(user.id) if user else None
 
-    engine_payload = _MODE_MAP.get(req.mode, ("top", None))
+    # Honor category hints from Liquid/iframe (upper_body|lower_body|dresses|footwear)
+    cat = (req.category or "").lower()
+    if cat in ("lower_body", "bottom", "pants", "trousers"):
+        engine_type = "bottom"
+    elif cat in ("dresses", "dress", "full", "ethnic"):
+        engine_type = "full"
+    elif cat in ("footwear", "shoes"):
+        engine_type = "shoes"
+    else:
+        engine_type = _MODE_MAP.get(req.mode, ("top", None))[0]
+        if req.mode in ("vton", "", None) and engine_type == "top":
+            engine_type = "top"
+
+    # Preprocess garment image with the category so the band crop keeps only
+    # the target garment (model shots include pants/shoes VTON would copy).
+    garment_url = await _preprocess_garment_for_vton(
+        req.garment_image, should_extract=True, garment_type=engine_type
+    )
 
     from api.services.vton_replicate import create_try_on_job
 
     result = await create_try_on_job(
         person_image_url=req.user_image,
         garment_image_url=garment_url,
-        garment_type=engine_payload[0],
+        garment_type=engine_type,
     )
 
-    return {
-        "status": result.get("status", "error"),
-        "result_image": result.get("result_image"),
+    job_id = None
+    try:
+        from uuid import UUID
+        try:
+            uid = UUID(user_id) if user_id else None
+        except (TypeError, ValueError):
+            uid = None
+        job = VTONJob(
+            user_id=uid,
+            garment_image=(garment_url or "")[:2000],
+            person_image=(req.user_image or "")[:500] or None,
+            result_image=result.get("result_image"),
+            status=result.get("status", "error"),
+            vto_engine=result.get("engine", "idm-vton"),
+            error_message=result.get("detail") if result.get("status") == "error" else None,
+            processing_time_ms=result.get("processing_time_ms"),
+        )
+        db.add(job)
+        await db.flush()
+        job_id = str(job.id)
+        if user_id and result.get("status") == "completed":
+            from api.models.schema import UserEvent
+            db.add(UserEvent(
+                user_id=uid,
+                event_type="vton_completed",
+                payload={"job_id": job_id, "mode": req.mode},
+                weight=2.0,
+            ))
+            await db.flush()
+    except Exception:
+        logger.warning("Failed to persist widget VTON job", exc_info=True)
+        job_id = None
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning("Widget VTON job rollback failed", exc_info=True)
+
+    status = result.get("status", "error")
+    result_image = result.get("result_image")
+    message = _humanize_vton_error(result.get("detail") if status != "completed" else None) or \
+              result.get("message") or "VTON completed"
+    resp = {
+        "status": status,
+        "result_image": result_image,
         "processing_time_ms": result.get("processing_time_ms"),
         "quality_score": result.get("quality_score"),
         "engine": result.get("engine", "idm-vton"),
         "garment_extracted": garment_url != req.garment_image,
+        # Contract aliases for Shopify modal / embed widgets
+        "success": status == "completed" and bool(result_image),
+        "image": result_image,
+        "error": None if status == "completed" and result_image else message,
+        "message": message,
     }
+    if job_id:
+        resp["job_id"] = job_id
+    return resp
 
 
 @router.get("/job/{job_id}")
@@ -281,37 +459,49 @@ async def upload_person_image(
     ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
     filename = f"person-images/{user_id or 'anonymous'}-{uuid.uuid4().hex}.{ext}"
 
-    # Upload to Cloudflare R2 (S3-compatible)
+    from botocore.config import Config
+    from botocore.exceptions import ClientError
+
+    # Upload to Cloudflare R2 (S3-compatible) — boto3 is sync: run it off the
+    # event loop so a slow R2 hop can't stall health checks and other requests
     try:
-        import boto3
-        from botocore.exceptions import ClientError
+        def _do_upload() -> str:
+            import boto3
 
-        account_id = os.getenv("R2_ACCOUNT_ID", "")
-        endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com" if account_id else None
+            account_id = os.getenv("R2_ACCOUNT_ID", "")
+            endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com" if account_id else None
 
-        s3_client = boto3.client(
-            "s3",
-            aws_access_key_id=os.getenv("R2_ACCESS_KEY_ID", "") or os.getenv("AWS_ACCESS_KEY_ID", ""),
-            aws_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", "") or os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            region_name="auto",
-            endpoint_url=endpoint_url,
-        )
+            s3_client = boto3.client(
+                "s3",
+                aws_access_key_id=os.getenv("R2_ACCESS_KEY_ID", "") or os.getenv("AWS_ACCESS_KEY_ID", ""),
+                aws_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", "") or os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+                region_name="auto",
+                endpoint_url=endpoint_url,
+                config=Config(
+                    signature_version="s3v4",
+                    connect_timeout=5,
+                    read_timeout=30,
+                    retries={"max_attempts": 2, "mode": "standard"},
+                ),
+            )
 
-        bucket = os.getenv("R2_BUCKET", "") or os.getenv("S3_BUCKET", "drishti")
+            bucket = os.getenv("R2_BUCKET", "") or os.getenv("S3_BUCKET", "drishti")
 
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=filename,
-            Body=contents,
-            ContentType=file.content_type,
-        )
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=filename,
+                Body=contents,
+                ContentType=file.content_type,
+            )
 
-        # Generate presigned URL
-        presigned_url = s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": filename},
-            ExpiresIn=3600,
-        )
+            # Generate presigned URL
+            return s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": filename},
+                ExpiresIn=3600,
+            )
+
+        presigned_url = await asyncio.to_thread(_do_upload)
 
         return {
             "message": "Upload successful",

@@ -20,6 +20,21 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     # NOTE: Tables are created via Alembic migrations only (alembic upgrade head)
     # Base.metadata.create_all removed to prevent auto-creating tables in production
+
+    # Warm the rembg ONNX session in the background: InferenceSession creation
+    # on a shared vCPU takes a while and must not sit on the first extract
+    # request's critical path. Also probes inference speed to decide whether
+    # local rembg is usable on this host at all.
+    def _warm():
+        try:
+            from api.services.garment_extract import warmup_rembg
+            warmup_rembg()
+        except Exception as e:
+            logger.warning(f"rembg warmup failed: {e}")
+
+    import asyncio as _asyncio
+    _asyncio.get_running_loop().run_in_executor(None, _warm)
+
     yield
     await engine.dispose()
     logger.info("Shutting down")
@@ -69,7 +84,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-from api.routers import user, catalog, analysis, look, reco, pricing, offer, webhooks, admin, vton, weather, attribution
+from api.routers import user, catalog, analysis, look, reco, pricing, offer, webhooks, admin, vton, weather, attribution, events
 
 app.include_router(user.router, prefix="/api/user", tags=["User"])
 app.include_router(catalog.router, prefix="/api/catalog", tags=["Catalog"])
@@ -83,6 +98,7 @@ app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
 app.include_router(attribution.router, prefix="/api/attribution", tags=["Attribution"])
+app.include_router(events.router, prefix="/api/events", tags=["Events"])
 
 
 @app.get("/health")

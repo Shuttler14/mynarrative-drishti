@@ -88,7 +88,6 @@ async def _make_images_accessible(recommendations: list[dict]) -> list[dict]:
 class RecommendRequest(BaseModel):
     session_id: str | None = None
     occasion: str | None = None
-    budget_max: float | None = None
     style: str | None = None
     body_profile: dict = {}
     exclude_ids: list[str] = []
@@ -107,6 +106,11 @@ class RecommendRequest(BaseModel):
     weather: dict | None = None
     city: str | None = None
     person_image_url: str | None = None
+    # Fashion DNA / preference overrides (Sprint 4)
+    styles: list[str] = []
+    wear: list[str] = []
+    vibe: list[str] = []
+    look_categories: list[str] | None = None
 
 
 class BrandsRequest(BaseModel):
@@ -165,35 +169,66 @@ def _get_clip_embedding(text: str) -> list[float] | None:
 async def recommend_outfits(
     req: RecommendRequest,
     authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
     db: AsyncSession = Depends(get_db),
 ):
     """Recommend products from ALL marketplaces (Amazon, Myntra, Flipkart) based on user preferences."""
-    user_id = None
-    if authorization:
-        payload = verify_token(authorization.replace("Bearer ", ""))
-        if payload:
-            user_id = payload["sub"]
+    from api.utils.identity import load_style_prefs, normalize_wear_weights, resolve_user
+
+    user = await resolve_user(
+        db,
+        authorization=authorization,
+        shopify_customer_id=x_shopify_customer_id,
+        create_if_missing=False,
+    )
+    user_id = str(user.id) if user else None
+
+    # Load contextual Fashion DNA prefs (soft preferences — hard gates untouched)
+    prefs: dict | None = None
+    if user_id:
+        prefs = await load_style_prefs(db, user_id, req.occasion or "")
+    # Request-level wear/vibe override DB for this turn (wizard chips)
+    if req.wear:
+        prefs = dict(prefs or {})
+        prefs["wear_weights"] = normalize_wear_weights(req.wear)
+    if req.vibe:
+        prefs = dict(prefs or {})
+        prefs["vibes"] = list(req.vibe)
+    if req.styles:
+        prefs = dict(prefs or {})
+        prefs["styles"] = list(req.styles)
+
+    style = req.style or ""
+    if not style and req.styles:
+        style = req.styles[0] or ""
+
+    # Merge DB style_profile brands if request didn't send any
+    brands = list(req.brands or [])
+    if not brands and user and isinstance(user.style_profile, dict):
+        brands = list(user.style_profile.get("brands") or [])
 
     # ── PRIMARY: Search marketplaces directly ──
     try:
         from api.services.marketplace_reco import get_marketplace_recommendations
-        
+
         result = await get_marketplace_recommendations(
             occasion=req.occasion or "",
-            style=req.style or "",
+            style=style,
             gender=req.gender or "",
             body_profile=req.body_profile or {},
             weather=req.weather or {},
             price_segment=req.price_segment or "",
             price_range=req.price_range or "",
             city=req.city or "",
-            brands=req.brands or [],
+            brands=brands or [],
             count=req.count or 12,
             budget_level=req.budget_level or "",
             budget_min=req.budget_min,
             budget_max=req.budget_max,
             budget_point=req.budget_point,
             budget_tolerance_pct=req.budget_tolerance_pct,
+            prefs=prefs,
+            user_id=user_id,
         )
         
         if result.get("recommendations"):
@@ -204,26 +239,103 @@ async def recommend_outfits(
             # Add aliases for frontend compatibility
             result["outfits"] = recs
             result["products"] = recs
+
+            # Fire-and-forget impression event (Fashion DNA loop)
+            if user_id:
+                try:
+                    from api.models.schema import UserEvent
+                    from uuid import UUID
+                    try:
+                        uid = UUID(str(user_id))
+                    except (TypeError, ValueError):
+                        uid = None
+                    if uid is not None:
+                        looks_meta = [
+                            {"id": lk.get("id"), "archetype": lk.get("archetype"), "why": lk.get("why")}
+                            for lk in (result.get("looks") or [])[:3]
+                        ]
+                        db.add(UserEvent(
+                            user_id=uid,
+                            event_type="impression",
+                            occasion=req.occasion,
+                            payload={
+                                "count": len(recs),
+                                "looks": looks_meta,
+                                "dress_code": (result.get("outfit_validation") or {}).get("dress_code"),
+                            },
+                            weight=0.1,
+                        ))
+                        await db.flush()
+                except Exception:
+                    logger.debug("impression event failed", exc_info=True)
+
             return result
             
     except Exception as e:
         logger.error(f"Marketplace search failed, falling back to Qdrant: {e}")
 
     # ── FALLBACK: Search from Shopify catalog via Qdrant ──
+    # Must run through the SAME fashion gates as marketplace results —
+    # otherwise office/western gets a random hoodie wall (no occasion,
+    # no formal signals, no slot tags).
     try:
         from api.services.catalog_sync import search_similar, generate_embedding
+        from api.services.fashion_engine import build_intent, enrich_product, hard_filter
 
-        style = req.style or "casual"
+        style = req.style or ""
+        if not style and req.styles:
+            style = req.styles[0] or ""
         occasion = req.occasion or ""
-        gender_label = ""
-        if req.gender:
-            gender_term = "women" if req.gender == "female" else "men" if req.gender == "male" else ""
-            if gender_term:
-                gender_label = f" for {gender_term}"
+        # wear is a chip list ["western","formal"] — normalise to weights
+        wear: dict = {}
+        if req.wear:
+            try:
+                from api.utils.identity import normalize_wear_weights
+                wear = normalize_wear_weights(req.wear) or {}
+            except Exception:
+                wear = {str(w).lower(): 1.0 for w in req.wear if w}
 
-        query_text = f"{style} clothing{gender_label}"
+        gender_term = ""
+        if req.gender in ("female", "woman", "girl", "f"):
+            gender_term = "women"
+        elif req.gender in ("male", "man", "m"):
+            gender_term = "men"
+
+        # Query text must match what we actually want to wear — formal
+        # signals for office western, ethnic words only if user asked.
+        query_bits = [style or "clothing"]
         if occasion:
-            query_text += f" for {occasion}"
+            query_bits.append(occasion)
+        if gender_term:
+            query_bits.append(gender_term)
+        if occasion in ("office", "work", "interview"):
+            western = float(wear.get("western") or 0) >= 0.75 and float(wear.get("indian") or 0) < 0.75
+            if western:
+                query_bits.extend(["formal", "shirt", "trousers", "blazer", "office wear"])
+            else:
+                query_bits.extend(["office wear", "formal"])
+        query_text = " ".join(str(q) for q in query_bits if q)
+
+        # Same intent object the marketplace path uses → same hard gates
+        intent = build_intent(
+            occasion=occasion,
+            style=style,
+            gender=req.gender or "",
+            price_segment=req.price_segment or "",
+            price_range=req.price_range or "",
+            weather=req.weather or {},
+            city=req.city or "",
+            brands=req.brands or [],
+            budget_level=req.budget_level or "",
+            budget_min=req.budget_min,
+            budget_max=req.budget_max,
+            budget_point=req.budget_point,
+            budget_tolerance_pct=req.budget_tolerance_pct or 20.0,
+            user_prefs={"wear_weights": wear} if wear else None,
+        )
+        band = intent.get("band")
+        if not band and (req.budget_min is not None or req.budget_max is not None):
+            band = (req.budget_min or 0, req.budget_max or 10**9)
 
         client = None
         try:
@@ -238,39 +350,45 @@ async def recommend_outfits(
         if client:
             embedding = generate_embedding(query_text)
             if embedding:
-                results = search_similar(client, embedding, limit=req.count * 2)
-                
-                # Configurable price tiers (INR)
-                price_ranges = {
-                    "budget": int(os.getenv("PRICE_TIER_BUDGET", "1500")),
-                    "mid": int(os.getenv("PRICE_TIER_MID", "5000")),
-                    "premium": int(os.getenv("PRICE_TIER_PREMIUM", "15000")),
-                    "luxury": int(os.getenv("PRICE_TIER_LUXURY", "999999")),
-                }
-                budget = price_ranges.get(req.price_segment, 5000) if req.price_segment else 5000
-                brand_filter = [b.lower() for b in req.brands] if req.brands else []
+                results = search_similar(client, embedding, limit=max(req.count * 4, 24))
 
-                recommendations = []
+                candidates = []
                 for r in results:
-                    price = r.get("price", 0)
-                    if price > budget:
-                        continue
-                    if brand_filter:
-                        title_lower = (r.get("title", "") or "").lower()
-                        brand_vendor = (r.get("vendor", "") or "").lower()
-                        if not any(b in title_lower or b in brand_vendor for b in brand_filter):
-                            continue
-                    recommendations.append({
-                        "product_id": r.get("shopify_id", ""),
+                    p = {
                         "title": r.get("title", ""),
-                        "category": r.get("category", ""),
-                        "price": price,
-                        "currency": r.get("currency", "INR"),
+                        "price": r.get("price", 0),
                         "image_url": r.get("image_url", ""),
                         "url": r.get("url", ""),
+                        "category": r.get("category", ""),
+                        "vendor": r.get("vendor", ""),
+                        "shopify_id": r.get("shopify_id", ""),
                         "score": r.get("score", 0),
                         "source": "shopify",
-                        "reason": f"Matches your {style} style",
+                    }
+                    enriched = enrich_product(p)
+                    if enriched.get("price") and not band:
+                        pass
+                    candidates.append(enriched)
+
+                # Apply the same occasion/gender/formal/budget gates
+                filtered = hard_filter(candidates, intent, band)
+                if not filtered and band:
+                    filtered = hard_filter(candidates, intent, None)
+
+                recommendations = []
+                for p in filtered:
+                    recommendations.append({
+                        "product_id": p.get("shopify_id", ""),
+                        "title": p.get("title", ""),
+                        "category": (p.get("fashion") or {}).get("category") or p.get("category", ""),
+                        "slot": (p.get("fashion") or {}).get("slot", ""),
+                        "price": p.get("price", 0),
+                        "currency": "INR",
+                        "image_url": p.get("image_url", ""),
+                        "url": p.get("url", ""),
+                        "score": round(float(p.get("_final") or p.get("score") or 0), 3),
+                        "source": "vector_search",
+                        "reason": f"Matches your {style or occasion or 'style'} style",
                     })
                     if len(recommendations) >= req.count:
                         break

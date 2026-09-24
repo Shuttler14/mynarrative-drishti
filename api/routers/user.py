@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import get_settings
 from api.database import get_db
-from api.models.schema import User, OTPRecord
+from api.models.schema import User, OTPRecord, UserStylePref
 from api.utils.auth import create_token, verify_token
+from api.utils.identity import normalize_wear_weights, resolve_user
 
 logger = logging.getLogger("drishti.user")
 settings = get_settings()
@@ -39,6 +40,30 @@ class UpdateProfileRequest(BaseModel):
     preferences: dict | None = None
     body_profile: dict | None = None
     style_profile: dict | None = None
+
+
+class SyncProfileRequest(BaseModel):
+    """Wizard profile sync payload (MN-stylist-wizard-v4 saveServerProfile)."""
+
+    email: str | None = None
+    name: str | None = None
+    gender: str | None = None
+    height_cm: float | None = None
+    body_type: str | None = None
+    shoulder_structure: str | None = None
+    torso_length: str | None = None
+    leg_proportion: str | None = None
+    fit_preference: str | None = None
+    preferred_styles: list[str] = []
+    preferred_colors: list[str] = []
+    style_profile: dict | None = None
+    preferences: dict | None = None
+    # Per-occasion contextual prefs: {occasion: {wear: [...], vibes: [...], budget_min, budget_max}}
+    contexts: dict | None = None
+    # Flat request-level wear/vibe for current occasion (Sprint 4)
+    occasion: str | None = None
+    wear: list[str] = []
+    vibe: list[str] = []
 
 
 class UserResponse(BaseModel):
@@ -106,7 +131,7 @@ async def send_otp(req: SendOTPRequest, db: AsyncSession = Depends(get_db)):
         contact=contact,
         otp_hash=otp_hash,
         purpose="login",
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10),
     )
     db.add(record)
     await db.flush()
@@ -182,18 +207,166 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
     }
 
 
+async def _upsert_style_pref(
+    db: AsyncSession,
+    user_id,
+    occasion: str,
+    *,
+    wear_weights: dict | None = None,
+    vibes: list | None = None,
+    brands: list | None = None,
+    budget_min: float | None = None,
+    budget_max: float | None = None,
+    adventure_level: str | None = None,
+    source: str = "wizard",
+) -> None:
+    from api.services.fashion_rules import canonicalize_occasion
+
+    occ = canonicalize_occasion(occasion or "casual")
+    result = await db.execute(
+        select(UserStylePref)
+        .where(UserStylePref.user_id == user_id)
+        .where(UserStylePref.occasion == occ)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = UserStylePref(user_id=user_id, occasion=occ)
+        db.add(row)
+    if wear_weights is not None:
+        row.wear_weights = normalize_wear_weights(wear_weights)
+    if vibes is not None:
+        row.vibes = list(vibes)
+    if brands is not None:
+        row.brands = list(brands)
+    if budget_min is not None:
+        row.budget_min = budget_min
+    if budget_max is not None:
+        row.budget_max = budget_max
+    if adventure_level:
+        row.adventure_level = adventure_level
+    row.source = source
+    await db.flush()
+
+
+@router.post("/sync")
+async def sync_profile(
+    req: SyncProfileRequest,
+    authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist wizard Style DNA + per-occasion wear preferences.
+
+    Accepts JWT (Authorization) and/or X-Shopify-Customer-Id (wizard default).
+    Creates a user shell from Shopify customer id when no JWT is present.
+    """
+    user = await resolve_user(
+        db,
+        authorization=authorization,
+        shopify_customer_id=x_shopify_customer_id,
+        create_if_missing=True,
+        email=req.email,
+        name=req.name,
+    )
+    if user is None:
+        raise HTTPException(401, "Identity required (JWT or X-Shopify-Customer-Id)")
+
+    if req.name:
+        user.name = req.name
+    if req.email and not user.email:
+        user.email = req.email
+
+    # Fold flat body fields into body_profile JSON
+    body = dict(user.body_profile or {})
+    if req.height_cm is not None:
+        body["height_cm"] = req.height_cm
+    if req.body_type:
+        body["body_type"] = req.body_type
+    if req.shoulder_structure:
+        body["shoulder_structure"] = req.shoulder_structure
+    if req.torso_length:
+        body["torso_length"] = req.torso_length
+    if req.leg_proportion:
+        body["leg_proportion"] = req.leg_proportion
+    if req.fit_preference:
+        body["fit_preference"] = req.fit_preference
+    if req.gender:
+        body["gender"] = req.gender
+    user.body_profile = body
+
+    # style_profile JSON (styles/occasions/brands/places/budget)
+    style = dict(user.style_profile or {})
+    if req.style_profile:
+        for k, v in req.style_profile.items():
+            if v is not None:
+                style[k] = v
+    if req.preferred_styles:
+        style["styles"] = req.preferred_styles
+    if req.preferred_colors:
+        style["colors"] = req.preferred_colors
+    if req.gender:
+        style["gender"] = req.gender
+    user.style_profile = style
+
+    prefs = dict(user.preferences or {})
+    if req.preferences:
+        prefs.update(req.preferences)
+    user.preferences = prefs
+
+    # Per-occasion contexts (primary path for wear chips)
+    if req.contexts:
+        for occ, ctx in req.contexts.items():
+            if not isinstance(ctx, dict):
+                continue
+            wear = ctx.get("wear")
+            vibes = ctx.get("vibes") or ctx.get("vibe")
+            await _upsert_style_pref(
+                db,
+                user.id,
+                occ,
+                wear_weights=wear if wear is not None else None,
+                vibes=vibes if isinstance(vibes, list) else None,
+                brands=ctx.get("brands") if isinstance(ctx.get("brands"), list) else None,
+                budget_min=ctx.get("budget_min"),
+                budget_max=ctx.get("budget_max"),
+                adventure_level=ctx.get("adventure_level"),
+                source=ctx.get("source") or "wizard",
+            )
+
+    # Flat current-turn wear/vibe (occurrence-scoped)
+    if req.occasion and (req.wear or req.vibe):
+        await _upsert_style_pref(
+            db,
+            user.id,
+            req.occasion,
+            wear_weights=req.wear or None,
+            vibes=req.vibe or None,
+            source="wizard",
+        )
+
+    await db.flush()
+    return {
+        "ok": True,
+        "user_id": str(user.id),
+        "style_profile": user.style_profile or {},
+        "body_profile": user.body_profile or {},
+    }
+
+
 @router.get("/me")
-async def get_me(authorization: str = Header(None), db: AsyncSession = Depends(get_db)):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
-
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
-
-    user = await db.get(User, payload["sub"])
+async def get_me(
+    authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await resolve_user(
+        db,
+        authorization=authorization,
+        shopify_customer_id=x_shopify_customer_id,
+        create_if_missing=False,
+    )
     if not user:
-        raise HTTPException(404, "User not found")
+        raise HTTPException(401, "Missing or invalid identity")
 
     return UserResponse(
         id=str(user.id),
@@ -212,18 +385,17 @@ async def get_me(authorization: str = Header(None), db: AsyncSession = Depends(g
 async def update_me(
     req: UpdateProfileRequest,
     authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
     db: AsyncSession = Depends(get_db),
 ):
-    if not authorization:
-        raise HTTPException(401, "Missing token")
-
-    payload = verify_token(authorization.replace("Bearer ", ""))
-    if not payload:
-        raise HTTPException(401, "Invalid token")
-
-    user = await db.get(User, payload["sub"])
+    user = await resolve_user(
+        db,
+        authorization=authorization,
+        shopify_customer_id=x_shopify_customer_id,
+        create_if_missing=False,
+    )
     if not user:
-        raise HTTPException(404, "User not found")
+        raise HTTPException(401, "Missing or invalid identity")
 
     if req.name is not None:
         user.name = req.name

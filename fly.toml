@@ -9,6 +9,9 @@ primary = "ams"
 [env]
   ENV = "production"
   PORT = "8000"
+  # Local u2net takes 60-90s per image on this shared vCPU — Replicate rembg
+  # (~7s) is the primary path; keep the ONNX session out of memory entirely
+  REMBG_LOCAL = "off"
   CORS_ORIGINS = '["https://mynarrative.in","https://www.mynarrative.in"]'
   SHOPIFY_STORE_URL = "https://mynarrative.in"
   SHOPIFY_DOMAIN = "jjdk0v-0c.myshopify.com"
@@ -35,6 +38,9 @@ primary = "ams"
   path = "/health"
 
 [[vm]]
-  memory = "1024mb"
+  # 1024MB OOM-killed uvicorn repeatedly (extract + live traffic ≈ 870MB RSS);
+  # 2048MB gives headroom. Scales applied outside this file get reset to this
+  # value on every deploy — change it HERE.
+  memory = "2048mb"
   cpu_kind = "shared"
   cpus = 1
