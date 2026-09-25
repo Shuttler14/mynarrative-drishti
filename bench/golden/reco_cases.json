@@ -1,0 +1,105 @@
+{
+  "_comment": "Golden labelled cases for RECO offline benchmark. Labels = DESIRED behaviour (contract), not current behaviour — a mismatch fails the release gate. Benches: build_intent (occasion accuracy + latency), hard_filter (gate false-passes = hard-rule violations), validate_outfit (validity + violation recall).",
+  "intent_cases": [
+    {"id": "i01", "occasion": "office", "expect": {"occasion": "work", "dress_code": "business_casual"}},
+    {"id": "i02", "occasion": "workplace", "expect": {"occasion": "work", "dress_code": "business_casual"}},
+    {"id": "i03", "occasion": "corporate", "expect": {"occasion": "work", "dress_code": "business_casual"}},
+    {"id": "i04", "occasion": "client meeting", "expect": {"occasion": "work", "dress_code": "business_casual"}},
+    {"id": "i05", "occasion": "presentation", "expect": {"occasion": "work", "dress_code": "business_casual"}},
+    {"id": "i06", "occasion": "job interview", "expect": {"occasion": "interview", "dress_code": "business_formal"}},
+    {"id": "i07", "occasion": "campus placement", "expect": {"occasion": "interview", "dress_code": "business_formal"}},
+    {"id": "i08", "occasion": "interview", "expect": {"occasion": "interview", "dress_code": "business_formal"}},
+    {"id": "i09", "occasion": "casual", "expect": {"occasion": "casual", "dress_code": "casual"}},
+    {"id": "i10", "occasion": "everyday", "expect": {"occasion": "casual", "dress_code": "casual"}},
+    {"id": "i11", "occasion": "weekend", "expect": {"occasion": "casual", "dress_code": "casual"}},
+    {"id": "i12", "occasion": "dinner", "expect": {"occasion": "date", "dress_code": "smart_casual"}},
+    {"id": "i13", "occasion": "cocktail", "expect": {"occasion": "party", "dress_code": "cocktail"}},
+    {"id": "i14", "occasion": "club", "expect": {"occasion": "party", "dress_code": "cocktail"}},
+    {"id": "i15", "occasion": "haldi", "expect": {"occasion": "wedding", "dress_code": "festive"}},
+    {"id": "i16", "occasion": "sangeet", "expect": {"occasion": "wedding", "dress_code": "festive"}},
+    {"id": "i17", "occasion": "diwali", "expect": {"occasion": "festive", "dress_code": "festive"}},
+    {"id": "i18", "occasion": "shaadi", "expect": {"occasion": "wedding", "dress_code": "festive"}},
+    {"id": "i19", "occasion": "puja", "expect": {"occasion": "traditional", "dress_code": "ceremonial"}},
+    {"id": "i20", "occasion": "workout", "expect": {"occasion": "gym", "dress_code": "sport"}},
+    {"id": "i21", "occasion": "yoga", "expect": {"occasion": "gym", "dress_code": "sport"}},
+    {"id": "i22", "occasion": "vacation", "expect": {"occasion": "travel", "dress_code": "casual"}},
+    {"id": "i23", "occasion": "goa", "expect": {"occasion": "beach", "dress_code": "casual"}},
+    {"id": "i24", "occasion": "campus", "expect": {"occasion": "college", "dress_code": "casual"}},
+    {"id": "i25", "occasion": "coffee", "expect": {"occasion": "brunch", "dress_code": "smart_casual"}},
+    {"id": "i26", "occasion": "party", "expect": {"occasion": "party", "dress_code": "cocktail"}},
+    {"id": "i27", "occasion": "wedding", "expect": {"occasion": "wedding", "dress_code": "festive"}},
+    {"id": "i28", "occasion": "festive", "expect": {"occasion": "festive", "dress_code": "festive"}},
+    {"id": "i29", "occasion": "xyzzy nonsense", "expect": {"occasion": "casual", "dress_code": "casual"}},
+    {"id": "i30", "occasion": "office", "style": "western", "expect": {"occasion": "work", "dress_code": "business_casual"}},
+    {"id": "i31", "occasion": "office", "style": "ethnic", "expect": {"occasion": "work", "dress_code": "business_casual"}},
+    {"id": "i32", "occasion": "office", "style": "corporate", "expect": {"occasion": "work", "dress_code": "business_casual"}}
+  ],
+  "filter_cases": [
+    {
+      "id": "f01", "occasion": "office", "style": "western", "gender": "female",
+      "user_prefs": {"wear_weights": {"western": 0.9, "indian": 0.1}},
+      "_note": "strict western office: formal western only — ethnic + casual + no-signal must all die",
+      "accept": ["p01", "p03", "p05", "p07", "p09"],
+      "reject": ["p13", "p14", "p15", "p17", "p19", "p21", "p23", "p32", "p34", "p38"]
+    },
+    {
+      "id": "f02", "occasion": "office", "gender": "male",
+      "_note": "plain office: formal-signal gate, no ethnic gate",
+      "accept": ["p08", "p02", "p10", "p04", "p12"],
+      "reject": ["p13", "p14", "p16", "p19", "p20", "p17", "p18", "p22", "p15"]
+    },
+    {
+      "id": "f03", "occasion": "interview", "gender": "male",
+      "_note": "interview: business_formal + occasion negatives (party/bridal)",
+      "accept": ["p12", "p02", "p04"],
+      "reject": ["p18", "p36", "p21", "p13"]
+    },
+    {
+      "id": "f04", "occasion": "gym", "gender": "male",
+      "_note": "gym: saree/blazer/formal/party negatives",
+      "accept": ["p29", "p33"],
+      "reject": ["p23", "p06", "p01", "p35"]
+    },
+    {
+      "id": "f05", "occasion": "wedding", "gender": "female",
+      "_note": "wedding: ethnic valid. (corporate-office negatives are search-time only, not product gates — p11 intentionally unasserted)",
+      "accept": ["p23", "p25", "p26", "p27"],
+      "reject": []
+    },
+    {
+      "id": "f06", "occasion": "casual", "gender": "female",
+      "_note": "casual: bridal/heavy-embellishment rejects. Formal shirt at casual is allowed by contract (casual Friday).",
+      "accept": ["p30", "p32", "p31"],
+      "reject": ["p21", "p35"]
+    },
+    {
+      "id": "f07", "occasion": "office", "gender": "",
+      "user_prefs": {"wear_weights": {"indian": 0.9, "western": 0.1}},
+      "_note": "indian office (NOT strict): plain formal kurta passes; 'kurta set' is a deliberate work-gate reject (festive-leaning); casual/no-signal die",
+      "accept": ["p39"],
+      "reject": ["p14", "p19", "p15", "p13", "p38"]
+    },
+    {
+      "id": "f08", "occasion": "work", "gender": "male",
+      "_note": "raw 'work' alias path — same gates as office",
+      "accept": ["p08", "p02", "p10"],
+      "reject": ["p13", "p16", "p14", "p19", "p18"]
+    }
+  ],
+  "outfit_cases": [
+    {"id": "o01", "occasion": "wedding", "products": ["p23", "p02"], "expect_passed": false, "expect_contains": "pairing", "_note": "saree + formal pants (user spec)"},
+    {"id": "o02", "occasion": "wedding", "products": ["p24", "p02"], "expect_passed": false, "expect_contains": "pairing", "_note": "sherwani + corporate trousers (user spec)"},
+    {"id": "o03", "occasion": "wedding", "products": ["p23", "p37"], "expect_passed": false, "expect_contains": "pairing", "_note": "saree + running shoes (keyword-gated exclusion)"},
+    {"id": "o04", "occasion": "wedding", "products": ["p25", "p30"], "expect_passed": false, "expect_contains": "pairing", "_note": "lehenga + jeans"},
+    {"id": "o05", "occasion": "casual", "products": ["p32", "p03"], "expect_passed": false, "expect_contains": "pairing", "_note": "dress + skirt"},
+    {"id": "o06", "occasion": "work", "products": ["p21"], "expect_passed": false, "expect_contains": "occasion_mismatch", "_note": "bridal lehenga at work"},
+    {"id": "o07", "occasion": "gym", "products": ["p23"], "expect_passed": false, "expect_contains": "occasion_mismatch", "_note": "saree at gym (user spec family)"},
+    {"id": "o08", "occasion": "wedding", "products": ["p24", "p31"], "expect_passed": false, "expect_contains": "pairing", "_note": "sherwani + sneakers"},
+    {"id": "o09", "occasion": "work", "products": ["p01", "p02", "p04"], "expect_passed": true, "_note": "canonical office trio"},
+    {"id": "o10", "occasion": "work", "products": ["p08", "p10"], "expect_passed": true},
+    {"id": "o11", "occasion": "wedding", "products": ["p23", "p27"], "expect_passed": true, "_note": "saree + ethnic chappals (soft exclusion, no keyword)"},
+    {"id": "o12", "occasion": "casual", "products": ["p29", "p30", "p31"], "expect_passed": true, "_note": "t-shirt + jeans + sneakers"},
+    {"id": "o13", "occasion": "work", "products": [], "expect_passed": false, "expect_contains": "empty", "_note": "empty outfit"},
+    {"id": "o14", "occasion": "party", "products": ["p35", "p05"], "expect_passed": true, "_note": "cocktail dress + heels"}
+  ]
+}

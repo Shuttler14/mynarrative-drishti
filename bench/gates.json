@@ -1,0 +1,39 @@
+{
+  "_comment": "Fashion Evaluation System — targets & release gates. Hard gates FAIL the release; targets are optimization metrics shown on the scorecard.",
+  "targets": {
+    "intent_ms_p95": 500,
+    "outfit_generation_ms_p95": 500,
+    "retrieval_ms_p95": 2500,
+    "validation_ms_p95": 500,
+    "reco_ready_ms_p95": 4000,
+    "vton_generation_ms_p95": 6000,
+    "e2e_vton_ms_p95": 10000,
+    "error_rate_pct_max": 1,
+    "outfit_validity_pct_min": 99,
+    "occasion_accuracy_pct_min": 98,
+    "garment_extraction_success_pct_min": 98,
+    "product_category_accuracy_pct_min": 98,
+    "garment_fidelity_pct_min": 90,
+    "identity_preservation_pct_min": 95,
+    "personalization_lift_pct_min": 5
+  },
+  "hard_gates": [
+    {"id": "hard_rule_violation", "source": "offline", "metric": "hard_rule_violation_pct", "cmp": "<=", "value": 1.0},
+    {"id": "outfit_validity", "source": "offline", "metric": "outfit_validity_pct", "cmp": ">=", "value": 99.0},
+    {"id": "occasion_accuracy", "source": "offline", "metric": "occasion_accuracy_pct", "cmp": ">=", "value": 98.0},
+    {"id": "intent_latency", "source": "offline", "metric": "intent_ms_p95", "cmp": "<=", "value": 500},
+    {"id": "validation_latency", "source": "offline", "metric": "validation_ms_p95", "cmp": "<=", "value": 500},
+    {"id": "reco_error_rate", "source": "live", "metric": "error_rate_pct", "cmp": "<=", "value": 1.0},
+    {"id": "reco_ready_latency", "source": "live", "metric": "reco_ready_ms_p95", "cmp": "<=", "value": 4000},
+    {"id": "live_outfit_validity", "source": "live", "metric": "live_outfit_validity_pct", "cmp": ">=", "value": 99.0},
+    {"id": "extraction_success", "source": "vton", "metric": "extraction_success_pct", "cmp": ">=", "value": 98.0},
+    {"id": "vton_failure", "source": "vton", "metric": "vton_failure_pct", "cmp": "<=", "value": 1.0},
+    {"id": "e2e_vton_latency", "source": "vton", "metric": "e2e_vton_ms_p95", "cmp": "<=", "value": 10000},
+    {"id": "garment_leakage", "source": "vton_labels", "metric": "garment_leakage_pct", "cmp": "<=", "value": 2.0, "optional_if_unlabelled": true}
+  ],
+  "cost": {
+    "_comment": "USD per image — set from your Replicate billing; null = not tracked",
+    "vton_cost_per_image_usd": null,
+    "extract_cost_per_image_usd": null
+  }
+}

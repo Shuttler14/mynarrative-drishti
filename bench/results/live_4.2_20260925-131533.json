@@ -1,0 +1,78 @@
+{
+ "version": "4.2",
+ "deployed_version": "4.2",
+ "metrics": {
+  "reco_ready_ms": {
+   "p50": 7146.028,
+   "p95": 7839.7132,
+   "p99": 7839.7132,
+   "n": 6,
+   "max": 7839.71
+  },
+  "reco_ready_ms_p95": 7839.7132,
+  "error_rate_pct": 0.0,
+  "success_n": 6,
+  "live_outfit_validity_pct": 100.0,
+  "server_outfit_validity_pct": 83.33,
+  "product_relevance_pct": 100.0,
+  "relevance_n": 28
+ },
+ "details": [
+  {
+   "id": "L1",
+   "status": 200,
+   "ms": 7839.7,
+   "count": 2,
+   "server_valid": true,
+   "source": "fashion_engine",
+   "reco_version": "4.2"
+  },
+  {
+   "id": "L2",
+   "status": 200,
+   "ms": 7308.7,
+   "count": 4,
+   "server_valid": true,
+   "source": "fashion_engine",
+   "reco_version": "4.2"
+  },
+  {
+   "id": "L3",
+   "status": 200,
+   "ms": 7146.0,
+   "count": 5,
+   "server_valid": true,
+   "source": "fashion_engine",
+   "reco_version": "4.2"
+  },
+  {
+   "id": "L4",
+   "status": 200,
+   "ms": 7256.5,
+   "count": 6,
+   "server_valid": false,
+   "source": "fashion_engine",
+   "reco_version": "4.2"
+  },
+  {
+   "id": "L5",
+   "status": 200,
+   "ms": 7118.7,
+   "count": 6,
+   "server_valid": true,
+   "source": "fashion_engine",
+   "reco_version": "4.2"
+  },
+  {
+   "id": "L6",
+   "status": 200,
+   "ms": 6938.4,
+   "count": 5,
+   "server_valid": true,
+   "source": "fashion_engine",
+   "reco_version": "4.2"
+  }
+ ],
+ "_ts": "2026-09-25T13:15:33",
+ "_kind": "live"
+}

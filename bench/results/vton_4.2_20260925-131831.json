@@ -1,0 +1,68 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "extraction_success_pct": 100.0,
+  "extraction_n": 5,
+  "extraction_ms": {
+   "p50": 10742.075,
+   "p95": 12259.2166,
+   "p99": 12259.2166,
+   "n": 5,
+   "max": 12259.22
+  },
+  "vton_success_pct": 100.0,
+  "vton_failure_pct": 0.0,
+  "vton_n": 5,
+  "vton_generation_ms": {
+   "p50": 28404.4936,
+   "p95": 33425.4012,
+   "p99": 33425.4012,
+   "n": 5,
+   "max": 33425.4
+  },
+  "vton_generation_ms_p95": 33425.4012,
+  "e2e_vton_ms": {
+   "p50": 39172.0027,
+   "p95": 44167.4762,
+   "p99": 44167.4762,
+   "n": 5,
+   "max": 44167.48
+  },
+  "e2e_vton_ms_p95": 44167.4762,
+  "extraction_failure_pct": 0.0
+ },
+ "details": [
+  {
+   "id": "v01",
+   "extract_ms": 1624.5,
+   "tryon_ms": 19374.8,
+   "ok": true
+  },
+  {
+   "id": "v02",
+   "extract_ms": 12259.2,
+   "tryon_ms": 29493.5,
+   "ok": true
+  },
+  {
+   "id": "v03",
+   "extract_ms": 10742.1,
+   "tryon_ms": 33425.4,
+   "ok": true
+  },
+  {
+   "id": "v04",
+   "extract_ms": 9575.4,
+   "tryon_ms": 22873.4,
+   "ok": true
+  },
+  {
+   "id": "v05",
+   "extract_ms": 10767.5,
+   "tryon_ms": 28404.5,
+   "ok": true
+  }
+ ],
+ "_ts": "2026-09-25T13:18:31",
+ "_kind": "vton"
+}

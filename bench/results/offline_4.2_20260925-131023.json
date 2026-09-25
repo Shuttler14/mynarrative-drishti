@@ -1,0 +1,51 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "occasion_accuracy_pct": 100.0,
+  "dress_code_accuracy_pct": 100.0,
+  "hard_rule_violation_pct": 0.0,
+  "filter_reject_n": 39,
+  "filter_accept_recall_pct": 100.0,
+  "filter_accept_n": 26,
+  "outfit_validity_pct": 100.0,
+  "outfit_valid_n": 5,
+  "violation_recall_pct": 100.0,
+  "outfit_invalid_n": 9,
+  "intent_ms": {
+   "p50": 0.0,
+   "p95": 0.0,
+   "p99": 0.0,
+   "n": 640,
+   "max": 0.57
+  },
+  "filter_ms": {
+   "p50": 0.07,
+   "p95": 0.09,
+   "p99": 0.12,
+   "n": 80,
+   "max": 0.12
+  },
+  "validation_ms": {
+   "p50": 0.0,
+   "p95": 0.02,
+   "p99": 0.02,
+   "n": 140,
+   "max": 0.04
+  },
+  "outfit_generation_ms": {
+   "p50": 0.03,
+   "p95": 0.03,
+   "p99": 0.04,
+   "n": 160,
+   "max": 0.1
+  },
+  "fixture_products": 39,
+  "cases": 54,
+  "intent_ms_p95": 0.0,
+  "validation_ms_p95": 0.02,
+  "outfit_generation_ms_p95": 0.03
+ },
+ "failures": [],
+ "_ts": "2026-09-25T13:10:23",
+ "_kind": "offline"
+}

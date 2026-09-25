@@ -1,0 +1,9 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "available": false
+ },
+ "error": "Multiple exceptions: [Errno 61] Connect call failed ('::1', 5432, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 5432)",
+ "_ts": "2026-09-25T13:18:31",
+ "_kind": "metrics"
+}

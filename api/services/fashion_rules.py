@@ -673,16 +673,38 @@ def pairing_violation(cat_a: str, cat_b: str, title_a: str = "", title_b: str = 
     if pair_covered:
         return False
 
-    # No hard_exclusion for this pair → consult per-garment never_with lists
+    # No hard_exclusion for this pair → consult per-garment never_with lists.
+    # Declarations are scoped to the garment TYPE the title actually matches:
+    # without this, never_with unions across every type sharing a category
+    # (oxford_shoes' bare "jeans" ban killed jeans + canvas sneakers too).
     garments = rules()["garments"]
+
+    def _declarers(cat: str, title: str) -> list[dict]:
+        t = (title or "").lower()
+        matched = []
+        for g in garments.values():
+            if cat not in (g.get("detect_categories") or []):
+                continue
+            kws = g.get("detect_keywords") or []
+            if kws and not any(k in t for k in kws):
+                continue
+            matched.append(g)
+        return matched
+
     never_a: set[str] = set()
+    for g in _declarers(cat_a, title_a):
+        never_a.update(g.get("never_with") or [])
     never_b: set[str] = set()
-    for g in garments.values():
-        dcats = g.get("detect_categories", [])
-        if cat_a in dcats:
-            never_a.update(g.get("never_with", []))
-        if cat_b in dcats:
-            never_b.update(g.get("never_with", []))
+    for g in _declarers(cat_b, title_b):
+        never_b.update(g.get("never_with") or [])
+    if not never_a and not never_b:
+        # Fallback: exotic title matched no detect_keywords → old category-only
+        # behaviour so declarations can't silently vanish
+        for g in garments.values():
+            if cat_a in (g.get("detect_categories") or []):
+                never_a.update(g.get("never_with") or [])
+            if cat_b in (g.get("detect_categories") or []):
+                never_b.update(g.get("never_with") or [])
 
     # Multi-word never_with entries are title keywords; bare words are category/garment ids
     def _never_hits(never: set[str], other_cat: str, other_title: str) -> bool:

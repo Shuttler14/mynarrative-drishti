@@ -1,0 +1,19 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "available": true,
+  "source": "prod(fly)",
+  "events": {
+   "look_save": 1,
+   "impression": 2
+  },
+  "impressions": 2,
+  "save_rate_pct": 50.0,
+  "vton_rate_pct": 0.0,
+  "purchase_rate_pct": 0.0,
+  "vton_to_save_pct": null,
+  "personalization_lift_pct": null
+ },
+ "_ts": "2026-09-25T13:20:21",
+ "_kind": "metrics"
+}

@@ -1,0 +1,203 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "occasion_accuracy_pct": 100.0,
+  "dress_code_accuracy_pct": 100.0,
+  "hard_rule_violation_pct": 0.0,
+  "filter_reject_n": 39,
+  "filter_accept_recall_pct": 100.0,
+  "filter_accept_n": 26,
+  "outfit_validity_pct": 100.0,
+  "outfit_valid_n": 5,
+  "violation_recall_pct": 100.0,
+  "outfit_invalid_n": 9,
+  "intent_ms": {
+   "p50": 0.0021,
+   "p95": 0.0032,
+   "p99": 0.0067,
+   "n": 640,
+   "max": 0.56
+  },
+  "filter_ms": {
+   "p50": 0.0651,
+   "p95": 0.094,
+   "p99": 0.135,
+   "n": 80,
+   "max": 0.14
+  },
+  "validation_ms": {
+   "p50": 0.0048,
+   "p95": 0.022,
+   "p99": 0.0248,
+   "n": 140,
+   "max": 0.03
+  },
+  "outfit_generation_ms": {
+   "p50": 0.0246,
+   "p95": 0.0318,
+   "p99": 0.0584,
+   "n": 160,
+   "max": 0.11
+  },
+  "fixture_products": 39,
+  "cases": 54,
+  "intent_ms_p95": 0.0032,
+  "validation_ms_p95": 0.022,
+  "outfit_generation_ms_p95": 0.0318,
+  "reco_ready_ms": {
+   "p50": 7146.028,
+   "p95": 7839.7132,
+   "p99": 7839.7132,
+   "n": 6,
+   "max": 7839.71
+  },
+  "reco_ready_ms_p95": 7839.7132,
+  "error_rate_pct": 0.0,
+  "success_n": 6,
+  "live_outfit_validity_pct": 100.0,
+  "server_outfit_validity_pct": 83.33,
+  "product_relevance_pct": 100.0,
+  "relevance_n": 28,
+  "extraction_success_pct": 100.0,
+  "extraction_n": 5,
+  "extraction_ms": {
+   "p50": 10742.075,
+   "p95": 12259.2166,
+   "p99": 12259.2166,
+   "n": 5,
+   "max": 12259.22
+  },
+  "vton_success_pct": 100.0,
+  "vton_failure_pct": 0.0,
+  "vton_n": 5,
+  "vton_generation_ms": {
+   "p50": 28404.4936,
+   "p95": 33425.4012,
+   "p99": 33425.4012,
+   "n": 5,
+   "max": 33425.4
+  },
+  "vton_generation_ms_p95": 33425.4012,
+  "e2e_vton_ms": {
+   "p50": 39172.0027,
+   "p95": 44167.4762,
+   "p99": 44167.4762,
+   "n": 5,
+   "max": 44167.48
+  },
+  "e2e_vton_ms_p95": 44167.4762,
+  "extraction_failure_pct": 0.0
+ },
+ "gates": [
+  {
+   "id": "hard_rule_violation",
+   "metric": "hard_rule_violation_pct",
+   "actual": 0.0,
+   "cmp": "<=",
+   "value": 1.0,
+   "status": "PASS"
+  },
+  {
+   "id": "outfit_validity",
+   "metric": "outfit_validity_pct",
+   "actual": 100.0,
+   "cmp": ">=",
+   "value": 99.0,
+   "status": "PASS"
+  },
+  {
+   "id": "occasion_accuracy",
+   "metric": "occasion_accuracy_pct",
+   "actual": 100.0,
+   "cmp": ">=",
+   "value": 98.0,
+   "status": "PASS"
+  },
+  {
+   "id": "intent_latency",
+   "metric": "intent_ms_p95",
+   "actual": 0.0032,
+   "cmp": "<=",
+   "value": 500,
+   "status": "PASS"
+  },
+  {
+   "id": "validation_latency",
+   "metric": "validation_ms_p95",
+   "actual": 0.022,
+   "cmp": "<=",
+   "value": 500,
+   "status": "PASS"
+  },
+  {
+   "id": "reco_error_rate",
+   "metric": "error_rate_pct",
+   "actual": 0.0,
+   "cmp": "<=",
+   "value": 1.0,
+   "status": "PASS"
+  },
+  {
+   "id": "reco_ready_latency",
+   "metric": "reco_ready_ms_p95",
+   "actual": 7839.7132,
+   "cmp": "<=",
+   "value": 4000,
+   "status": "FAIL"
+  },
+  {
+   "id": "live_outfit_validity",
+   "metric": "live_outfit_validity_pct",
+   "actual": 100.0,
+   "cmp": ">=",
+   "value": 99.0,
+   "status": "PASS"
+  },
+  {
+   "id": "extraction_success",
+   "metric": "extraction_success_pct",
+   "actual": 100.0,
+   "cmp": ">=",
+   "value": 98.0,
+   "status": "PASS"
+  },
+  {
+   "id": "vton_failure",
+   "metric": "vton_failure_pct",
+   "actual": 0.0,
+   "cmp": "<=",
+   "value": 1.0,
+   "status": "PASS"
+  },
+  {
+   "id": "e2e_vton_latency",
+   "metric": "e2e_vton_ms_p95",
+   "actual": 44167.4762,
+   "cmp": "<=",
+   "value": 10000,
+   "status": "FAIL"
+  },
+  {
+   "id": "garment_leakage",
+   "metric": "garment_leakage_pct",
+   "actual": null,
+   "cmp": "<=",
+   "value": 2.0,
+   "status": "NO-DATA"
+  }
+ ],
+ "failed_gates": [
+  "reco_ready_latency",
+  "e2e_vton_latency"
+ ],
+ "missing_gates": [],
+ "strict": false,
+ "passed": false,
+ "sources": {
+  "offline": "bench/results/offline_4.2_20260925-132052.json",
+  "live": "bench/results/live_4.2_20260925-131533.json",
+  "vton": "bench/results/vton_4.2_20260925-131831.json"
+ },
+ "_ts": "2026-09-25T13:20:52",
+ "_kind": "scorecard"
+}

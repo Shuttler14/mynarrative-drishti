@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.models.schema import User, Session, LookCard
+from api.services.reco_version import RECO_VERSION, version_info
 from api.utils.auth import verify_token
 
 logger = logging.getLogger("drishti.reco")
@@ -239,6 +240,7 @@ async def recommend_outfits(
             # Add aliases for frontend compatibility
             result["outfits"] = recs
             result["products"] = recs
+            result["reco_version"] = RECO_VERSION
 
             # Fire-and-forget impression event (Fashion DNA loop)
             if user_id:
@@ -394,13 +396,19 @@ async def recommend_outfits(
                         break
 
                 if recommendations:
-                    return {"recommendations": recommendations, "count": len(recommendations), "source": "vector_search"}
+                    return {"recommendations": recommendations, "count": len(recommendations), "source": "vector_search", "reco_version": RECO_VERSION}
 
     except Exception as e:
         logger.error(f"Qdrant fallback failed: {e}")
 
     # ── FINAL FALLBACK: Empty ──
-    return {"recommendations": [], "count": 0, "source": "none"}
+    return {"recommendations": [], "count": 0, "source": "none", "reco_version": RECO_VERSION}
+
+
+@router.get("/version")
+async def reco_version():
+    """Deployed recommender version — used by bench/ for scorecard traceability."""
+    return version_info()
 
 
 @router.post("/brands")
