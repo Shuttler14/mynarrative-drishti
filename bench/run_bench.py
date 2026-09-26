@@ -458,7 +458,8 @@ def run_vton(base, tryon_n=None):
             print(f"  {c['id']} extract={ex_ms and round(ex_ms)}ms tryon={round(ms)}ms "
                   f"→ {'OK' if done else 'FAIL ' + str(body.get('message') or body.get('status'))}")
             details.append({"id": c["id"], "extract_ms": ex_ms and round(ex_ms, 1),
-                            "tryon_ms": round(ms, 1), "ok": bool(done)})
+                            "tryon_ms": round(ms, 1), "ok": bool(done),
+                            **({"stages": body["stages"]} if isinstance(body.get("stages"), dict) else {})})
         else:
             details.append({"id": c["id"], "extract_ms": None, "tryon_ms": None,
                             "ok": False, "note": "no garment (extract failed)"})

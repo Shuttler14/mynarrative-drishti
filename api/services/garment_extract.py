@@ -27,6 +27,8 @@ import httpx
 import numpy as np
 from PIL import Image
 
+from api.services.replicate_limits import create_prediction
+
 logger = logging.getLogger("drishti.garment")
 
 REPLICATE_API = "https://api.replicate.com/v1"
@@ -38,6 +40,21 @@ def _get_token() -> str:
 
 def _get_rembg_version() -> str:
     return os.getenv("REPLICATE_REMBG_VERSION", "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003")
+
+
+# Pooled client: a fresh TLS handshake per create/poll costs 300-500ms on the
+# SIN → Replicate (US) path, and extraction makes up to ~15 calls per job.
+_rembg_client: Optional[httpx.AsyncClient] = None
+
+
+def _rc() -> httpx.AsyncClient:
+    global _rembg_client
+    if _rembg_client is None or _rembg_client.is_closed:
+        _rembg_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_connections=6, max_keepalive_connections=4),
+        )
+    return _rembg_client
 
 
 _rembg_session = None
@@ -188,11 +205,56 @@ async def _local_remove_bg(image_bytes: bytes) -> Optional[bytes]:
         lock.release()
 
 
-async def _replicate_remove_bg(image_url: str) -> Optional[str]:
-    """Use Replicate's rembg model to remove background. Returns output URL.
-    
-    Downloads image first and sends as base64 data URI to avoid DNS issues
-    with marketplace CDNs (e.g. Flipkart's rukminim2.flikt.com).
+def _rembg_max_dim() -> int:
+    """Cap for rembg input resolution. Masks don't need full camera pixels
+    (4032px inputs cost seconds of inference), and the final garment output
+    is thumbnailed to 1024 anyway. REMBG_MAX_DIM=0 disables."""
+    try:
+        return int(os.getenv("REMBG_MAX_DIM", "1280"))
+    except ValueError:
+        return 1280
+
+
+def _prep_rembg_input(img_bytes: bytes) -> str:
+    """Downscale (if needed) and encode image bytes as a data URI for rembg."""
+    import base64 as _b64
+
+    cap = _rembg_max_dim()
+    if cap > 0:
+        try:
+            im = Image.open(io.BytesIO(img_bytes))
+            w, h = im.size
+            if max(w, h) > cap:
+                scale = cap / float(max(w, h))
+                im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+                buf = io.BytesIO()
+                is_png = img_bytes[:8] == b'\x89PNG\r\n\x1a\n'
+                if is_png:
+                    im.save(buf, format="PNG", optimize=True)
+                else:
+                    if im.mode not in ("RGB", "L"):
+                        im = im.convert("RGB")
+                    im.save(buf, format="JPEG", quality=90)
+                img_bytes = buf.getvalue()
+                logger.info(f"rembg input downscaled {w}x{h} → {im.size[0]}x{im.size[1]}")
+        except Exception as e:
+            logger.warning(f"rembg downscale skipped: {e}")
+
+    if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+        ct = "image/png"
+    elif img_bytes[:3] == b'\xff\xd8\xff':
+        ct = "image/jpeg"
+    elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+        ct = "image/webp"
+    else:
+        ct = "image/jpeg"
+    return f"data:{ct};base64,{_b64.b64encode(img_bytes).decode()}"
+
+
+async def _run_rembg(image_input: str) -> Optional[str]:
+    """Run the hosted rembg prediction. Returns output URL or None.
+
+    ``image_input`` should be a data URI (or a URL as last resort).
     """
     token = _get_token()
     if not token:
@@ -204,26 +266,6 @@ async def _replicate_remove_bg(image_url: str) -> Optional[str]:
         "Content-Type": "application/json",
     }
 
-    # Download image first and convert to data URI (avoids CDN DNS issues)
-    image_input = image_url
-    try:
-        img_bytes = await download_image(image_url)
-        import base64
-        b64 = base64.b64encode(img_bytes).decode()
-        # Detect content type from bytes
-        if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
-            ct = "image/png"
-        elif img_bytes[:3] == b'\xff\xd8\xff':
-            ct = "image/jpeg"
-        elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
-            ct = "image/webp"
-        else:
-            ct = "image/jpeg"
-        image_input = f"data:{ct};base64,{b64}"
-        logger.info(f"Downloaded image ({len(img_bytes)} bytes) for rembg")
-    except Exception as e:
-        logger.warning(f"Failed to download image for rembg, passing URL directly: {e}")
-
     payload = {
         "version": _get_rembg_version(),
         "input": {
@@ -232,54 +274,78 @@ async def _replicate_remove_bg(image_url: str) -> Optional[str]:
     }
 
     try:
-        # Create prediction with retry on 429
-        pred_id = None
-        for attempt in range(3):
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(f"{REPLICATE_API}/predictions", headers=headers, json=payload)
-                if resp.status_code == 429:
-                    wait = 10 * (attempt + 1)
-                    logger.warning(f"Replicate rembg rate limited (429), retrying in {wait}s")
-                    await asyncio.sleep(wait)
-                    continue
-                if resp.status_code != 201:
-                    logger.error(f"Replicate rembg create failed: {resp.status_code} {resp.text[:200]}")
-                    return None
-                pred = resp.json()
-                pred_id = pred["id"]
-                break
-
-        if not pred_id:
+        # Shared create helper: spacing + 429 body logging + Retry-After backoff
+        resp = await create_prediction(payload, headers, tag="rembg")
+        if resp is None:
             logger.error("Replicate rembg rate limited after retries")
             return None
+        if resp.status_code != 201:
+            logger.error(f"Replicate rembg create failed: {resp.status_code} {resp.text[:200]}")
+            return None
+        pred = resp.json()
+        pred_id = pred["id"]
 
-        # Poll until done (max 30s — it's the fallback path now; local
-        # onnxruntime runs first)
-        for _ in range(15):
-            await asyncio.sleep(2)
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(f"{REPLICATE_API}/predictions/{pred_id}", headers=headers)
-                if resp.status_code != 200:
-                    continue
-                d = json.loads(resp.text, strict=False)
-                status = d.get("status")
-                if status == "succeeded":
-                    output = d.get("output", "")
-                    if isinstance(output, list) and output:
-                        return output[0]
-                    elif isinstance(output, str) and output:
-                        return output
-                    return None
-                elif status in ("failed", "canceled"):
-                    logger.error(f"Replicate rembg failed: {d.get('error')}")
-                    return None
+        # Poll until done (max 30s). 429s on GET used to be swallowed
+        # (status=None → keeps polling) and showed up as dead seconds.
+        poll_429 = 0
+        for _ in range(30):
+            await asyncio.sleep(1)
+            resp = await _rc().get(f"{REPLICATE_API}/predictions/{pred_id}", headers=headers)
+            if resp.status_code == 429:
+                poll_429 += 1
+                ra = resp.headers.get("Retry-After", "")
+                try:
+                    await asyncio.sleep(min(float(ra), 3.0) if ra else 1.5)
+                except ValueError:
+                    await asyncio.sleep(1.5)
+                continue
+            if resp.status_code != 200:
+                continue
+            d = json.loads(resp.text, strict=False)
+            status = d.get("status")
+            if status == "succeeded":
+                if poll_429:
+                    logger.warning(f"rembg polls hit {poll_429}x429 before success")
+                output = d.get("output", "")
+                if isinstance(output, list) and output:
+                    return output[0]
+                elif isinstance(output, str) and output:
+                    return output
+                return None
+            elif status in ("failed", "canceled"):
+                logger.error(f"Replicate rembg failed: {d.get('error')}")
+                return None
 
-        logger.error("Replicate rembg timed out")
+        logger.error(f"Replicate rembg timed out (poll_429={poll_429})")
         return None
 
     except Exception as e:
         logger.error(f"Replicate rembg error: {e}")
         return None
+
+
+async def _replicate_remove_bg(image_url: str) -> Optional[str]:
+    """Use Replicate's rembg model to remove background. Returns output URL.
+
+    Downloads the image first and sends a downscaled base64 data URI to avoid
+    DNS issues with marketplace CDNs (e.g. Flipkart's rukminim2.flikt.com).
+    """
+    try:
+        img_bytes = await download_image(image_url)
+        logger.info(f"Downloaded image ({len(img_bytes)} bytes) for rembg")
+        image_input = await asyncio.to_thread(_prep_rembg_input, img_bytes)
+    except Exception as e:
+        # Last resort: hand Replicate the raw URL directly
+        logger.warning(f"Failed to prepare image for rembg, passing URL directly: {e}")
+        image_input = image_url
+    return await _run_rembg(image_input)
+
+
+async def _replicate_remove_bg_bytes(img_bytes: bytes) -> Optional[str]:
+    """Same as _replicate_remove_bg but from in-memory bytes — skips the
+    temp-R2-upload + re-download round-trip entirely."""
+    image_input = await asyncio.to_thread(_prep_rembg_input, img_bytes)
+    return await _run_rembg(image_input)
 
 
 async def download_image(url: str) -> bytes:
@@ -700,12 +766,14 @@ async def extract_garment(
         logger.error(f"Failed to download source image: {e}")
         return {"error": f"Download failed: {e}", "garment_image": image_url, "original_url": image_url}
 
-    # Step 2: Background removal — local onnxruntime first, Replicate fallback
+    # Step 2: Background removal — local onnxruntime first, Replicate fallback.
+    # Bytes variant reuses the download from Step 1 (no second fetch, no
+    # temp-R2 round-trip) and sends a downscaled data URI.
     no_bg_bytes = await _local_remove_bg(original_bytes)
     if no_bg_bytes:
         logger.info(f"Background removal: local rembg ({time.time() - start:.1f}s)")
     else:
-        no_bg_url = await _replicate_remove_bg(image_url)
+        no_bg_url = await _replicate_remove_bg_bytes(original_bytes)
         if not no_bg_url:
             return {"error": "Background removal failed", "garment_image": image_url, "original_url": image_url}
         try:
@@ -760,23 +828,19 @@ async def extract_garment_from_bytes(
     original_img = Image.open(io.BytesIO(image_bytes))
     original_size = original_img.size
 
-    # Local background removal first — no temp upload needed
+    # Background removal — bytes path: no temp R2 upload, downscaled data URI
     no_bg_bytes = await _local_remove_bg(image_bytes)
     if no_bg_bytes:
         logger.info("Background removal: local rembg (bytes)")
     else:
-        # Replicate fallback needs a URL — upload temp copy
-        import hashlib
-        temp_key = f"temp/{hashlib.md5(image_bytes).hexdigest()[:12]}.png"
-        temp_url = await upload_to_r2(image_bytes, temp_key)
-        if not temp_url:
-            return {"error": "Failed to upload image for processing", "garment_image": None}
-        no_bg_url = await _replicate_remove_bg(temp_url)
+        no_bg_url = await _replicate_remove_bg_bytes(image_bytes)
         if not no_bg_url:
             return {"error": "Background removal failed", "garment_image": None}
         no_bg_bytes = await download_image(no_bg_url)
+    t_rembg = time.time()
 
     garment_bytes = await asyncio.to_thread(_post_process_garment, no_bg_bytes, gtype)
+    t_post = time.time()
 
     garment_img = Image.open(io.BytesIO(garment_bytes))
     garment_size = garment_img.size
@@ -791,6 +855,12 @@ async def extract_garment_from_bytes(
         garment_url = f"data:image/png;base64,{b64}"
 
     elapsed = int((time.time() - start) * 1000)
+    logger.info(
+        "extract_bytes stages: rembg_ms=%d post_ms=%d upload_ms=%d total_ms=%d in=%sx%s out=%sx%s",
+        int((t_rembg - start) * 1000), int((t_post - t_rembg) * 1000),
+        int((time.time() - t_post) * 1000), elapsed,
+        original_size[0], original_size[1], garment_size[0], garment_size[1],
+    )
 
     return {
         "garment_image": garment_url,

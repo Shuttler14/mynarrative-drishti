@@ -1,0 +1,159 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "extraction_success_pct": 100.0,
+  "extraction_n": 5,
+  "extraction_ms": {
+   "p50": 21258.7696,
+   "p95": 22419.4529,
+   "p99": 22419.4529,
+   "n": 5,
+   "max": 22419.45
+  },
+  "vton_success_pct": 100.0,
+  "vton_failure_pct": 0.0,
+  "vton_n": 5,
+  "vton_generation_ms": {
+   "p50": 10757.5725,
+   "p95": 10854.5883,
+   "p99": 10854.5883,
+   "n": 5,
+   "max": 10854.59
+  },
+  "vton_generation_ms_p95": 10854.5883,
+  "e2e_vton_ms": {
+   "p50": 31396.8976,
+   "p95": 32083.7278,
+   "p99": 32083.7278,
+   "n": 5,
+   "max": 32083.73
+  },
+  "e2e_vton_ms_p95": 32083.7278,
+  "extraction_failure_pct": 0.0
+ },
+ "details": [
+  {
+   "id": "v01",
+   "extract_ms": 1101.1,
+   "tryon_ms": 10757.6,
+   "ok": true,
+   "stages": {
+    "download_ms": 598,
+    "create_ms": 2440,
+    "queue_ms": 2893,
+    "load_ms": 0,
+    "predict_ms": 3067,
+    "poll_lag_ms": 873,
+    "total_ms": 9273,
+    "garments": 1,
+    "payload_kb": 483,
+    "poll_429": 0,
+    "poll_err": 0,
+    "transitions": [
+     "starting@3301ms",
+     "processing@5695ms",
+     "succeeded@9273ms"
+    ],
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v02",
+   "extract_ms": 21258.8,
+   "tryon_ms": 10825.0,
+   "ok": true,
+   "stages": {
+    "download_ms": 204,
+    "create_ms": 986,
+    "queue_ms": 34,
+    "load_ms": 0,
+    "predict_ms": 4060,
+    "poll_lag_ms": 4889,
+    "total_ms": 9969,
+    "garments": 1,
+    "payload_kb": 707,
+    "poll_429": 0,
+    "poll_err": 0,
+    "transitions": [
+     "processing@6753ms",
+     "succeeded@9969ms"
+    ],
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v03",
+   "extract_ms": 20542.3,
+   "tryon_ms": 10854.6,
+   "ok": true,
+   "stages": {
+    "download_ms": 492,
+    "create_ms": 670,
+    "queue_ms": 34,
+    "load_ms": 0,
+    "predict_ms": 4091,
+    "poll_lag_ms": 4675,
+    "total_ms": 9470,
+    "garments": 1,
+    "payload_kb": 717,
+    "poll_429": 0,
+    "poll_err": 0,
+    "transitions": [
+     "processing@5440ms",
+     "succeeded@9470ms"
+    ],
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v04",
+   "extract_ms": 21445.2,
+   "tryon_ms": 10590.6,
+   "ok": true,
+   "stages": {
+    "download_ms": 598,
+    "create_ms": 3672,
+    "queue_ms": 32,
+    "load_ms": 0,
+    "predict_ms": 3681,
+    "poll_lag_ms": 736,
+    "total_ms": 8121,
+    "garments": 1,
+    "payload_kb": 693,
+    "poll_429": 0,
+    "poll_err": 0,
+    "transitions": [
+     "processing@4479ms",
+     "succeeded@8121ms"
+    ],
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v05",
+   "extract_ms": 22419.5,
+   "tryon_ms": 7641.8,
+   "ok": true,
+   "stages": {
+    "download_ms": 220,
+    "create_ms": 2271,
+    "queue_ms": 42,
+    "load_ms": 0,
+    "predict_ms": 3482,
+    "poll_lag_ms": 468,
+    "total_ms": 6263,
+    "garments": 1,
+    "payload_kb": 677,
+    "poll_429": 0,
+    "poll_err": 0,
+    "transitions": [
+     "processing@3084ms",
+     "succeeded@6263ms"
+    ],
+    "preprocess_ms": 0
+   }
+  }
+ ],
+ "_ts": "2026-09-26T20:48:23",
+ "_kind": "vton"
+}

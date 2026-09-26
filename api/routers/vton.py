@@ -4,11 +4,12 @@ import asyncio
 import base64
 import logging
 import os
+import time
 import uuid
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, UploadFile, File, Form, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -194,6 +195,50 @@ async def _preprocess_garment_for_vton(garment_url: str, should_extract: bool, g
     return garment_url
 
 
+async def _persist_vton_job_async(
+    job_id: uuid.UUID,
+    uid: uuid.UUID | None,
+    garment_image: str | None,
+    person_image: str | None,
+    person_url: str | None,
+    result: dict,
+    event_payload: dict | None = None,
+):
+    """Persist the VTON job AFTER the response is sent.
+
+    Neon (us-east-1) sits ~200ms/RTT from Fly SIN; the inline insert+flush was
+    adding 1.1-5.8s to every try-on response for data nothing user-facing needs.
+    """
+    try:
+        from api.database import async_session
+        from api.models.schema import UserEvent
+
+        async with async_session() as session:
+            session.add(VTONJob(
+                id=job_id,
+                user_id=uid,
+                garment_image=(garment_image or "")[:2000],
+                person_image=(person_image or "")[:2000] or None,
+                person_url=(person_url or "")[:2000] or None,
+                result_image=result.get("result_image"),
+                status=result.get("status", "error"),
+                vto_engine=result.get("engine", "idm-vton"),
+                error_message=result.get("detail") if result.get("status") == "error" else None,
+                processing_time_ms=result.get("processing_time_ms"),
+            ))
+            if uid and result.get("status") == "completed":
+                session.add(UserEvent(
+                    user_id=uid,
+                    event_type="vton_completed",
+                    payload=event_payload or {},
+                    weight=2.0,
+                ))
+            await session.commit()
+        logger.info(f"vton_job persisted in background: {job_id}")
+    except Exception:
+        logger.warning("Background VTON persist failed", exc_info=True)
+
+
 # ── VTON Endpoints ──
 
 @router.post("/try-on")
@@ -201,10 +246,12 @@ async def create_vton_job(
     req: VTONRequest,
     authorization: str = Header(None),
     x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
 ):
     from api.utils.identity import resolve_user
 
+    t_entry = time.time()
     user = await resolve_user(
         db,
         authorization=authorization,
@@ -228,14 +275,17 @@ async def create_vton_job(
     # Per-garment type hints from the wizard (slot names) drive the band crop
     # so only the target garment's silhouette region is handed to VTON.
     types = list(req.garment_types or [])
-    processed = [
-        await _preprocess_garment_for_vton(
+    t_pre = time.time()
+    # Parallel: sequential awaits made a 3-look full-try-on pay extract 3×
+    processed = list(await asyncio.gather(*[
+        _preprocess_garment_for_vton(
             u,
             req.extract_garment,
             garment_type=(types[i] if i < len(types) else "auto"),
         )
         for i, u in enumerate(garment_urls)
-    ]
+    ]))
+    preprocess_ms = int((time.time() - t_pre) * 1000)
 
     from api.services.vton_replicate import create_try_on_job
 
@@ -246,6 +296,7 @@ async def create_vton_job(
     elif len(processed) > 1:
         garment_type = "full"
 
+    t_create_call = time.time()
     result = await create_try_on_job(
         person_image_url=req.person_image_url,
         garment_image_url=processed[0],
@@ -253,51 +304,30 @@ async def create_vton_job(
         garment_type=garment_type,
         seed=req.seed,
     )
+    t_post = time.time()
+    if result.get("stages") is not None:
+        result["stages"]["preprocess_ms"] = preprocess_ms
 
-    # Persist job so /job/{id} and /history work (Fashion DNA high-signal event)
-    job_id = None
+    # Persist in the background — the response must not wait on Neon roundtrips
     try:
-        from uuid import UUID
-        try:
-            uid = UUID(user_id) if user_id else None
-        except (TypeError, ValueError):
-            uid = None
-        job = VTONJob(
-            user_id=uid,
-            garment_image=(processed[0] or "")[:2000],
-            person_image=(req.person_image_url or "")[:2000] or None,
-            person_url=(req.person_image_url or "")[:2000] or None,
-            result_image=result.get("result_image"),
-            status=result.get("status", "error"),
-            vto_engine=result.get("engine", "idm-vton"),
-            error_message=result.get("detail") if result.get("status") == "error" else None,
-            processing_time_ms=result.get("processing_time_ms"),
-        )
-        db.add(job)
-        await db.flush()
-        job_id = str(job.id)
-
-        # Record high-signal behavior event for preference updater
-        if user_id and result.get("status") == "completed":
-            from api.models.schema import UserEvent
-            db.add(UserEvent(
-                user_id=uid,
-                event_type="vton_completed",
-                payload={
-                    "job_id": job_id,
-                    "result_image": bool(result.get("result_image")),
-                    "engine": result.get("engine", "idm-vton"),
-                },
-                weight=2.0,
-            ))
-            await db.flush()
-    except Exception:
-        logger.warning("Failed to persist VTON job", exc_info=True)
-        job_id = None
-        try:
-            await db.rollback()
-        except Exception:
-            logger.warning("VTON job rollback failed", exc_info=True)
+        uid = uuid.UUID(user_id) if user_id else None
+    except (TypeError, ValueError):
+        uid = None
+    job_id = str(uuid.uuid4())
+    background_tasks.add_task(
+        _persist_vton_job_async,
+        uuid.UUID(job_id),
+        uid,
+        processed[0],
+        req.person_image_url,
+        req.person_image_url,
+        result,
+        {
+            "job_id": job_id,
+            "result_image": bool(result.get("result_image")),
+            "engine": result.get("engine", "idm-vton"),
+        },
+    )
 
     status = result.get("status", "error")
     result_image = result.get("result_image")
@@ -312,8 +342,17 @@ async def create_vton_job(
         "garment_extracted": any(p != u for p, u in zip(processed, garment_urls)),
         "message": message,
     }
-    if job_id:
-        resp["job_id"] = job_id
+    if result.get("stages") is not None:
+        resp["stages"] = result["stages"]
+    resp["job_id"] = job_id
+    t_end = time.time()
+    logger.info(
+        "vton_handler pre_ms=%d create_wall_ms=%d persist_ms=%d total_ms=%d",
+        int((t_create_call - t_entry) * 1000),
+        int((t_post - t_create_call) * 1000),
+        int((t_end - t_post) * 1000),
+        int((t_end - t_entry) * 1000),
+    )
     return resp
 
 
@@ -322,6 +361,7 @@ async def widget_try_on(
     req: WidgetTryOnRequest,
     authorization: str = Header(None),
     x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Shopify widget endpoint — normalizes payload format before forwarding to Replicate."""
@@ -350,9 +390,11 @@ async def widget_try_on(
 
     # Preprocess garment image with the category so the band crop keeps only
     # the target garment (model shots include pants/shoes VTON would copy).
+    t_pre = time.time()
     garment_url = await _preprocess_garment_for_vton(
         req.garment_image, should_extract=True, garment_type=engine_type
     )
+    preprocess_ms = int((time.time() - t_pre) * 1000)
 
     from api.services.vton_replicate import create_try_on_job
 
@@ -361,43 +403,25 @@ async def widget_try_on(
         garment_image_url=garment_url,
         garment_type=engine_type,
     )
+    if result.get("stages") is not None:
+        result["stages"]["preprocess_ms"] = preprocess_ms
 
-    job_id = None
+    # Persist in the background — the response must not wait on Neon roundtrips
     try:
-        from uuid import UUID
-        try:
-            uid = UUID(user_id) if user_id else None
-        except (TypeError, ValueError):
-            uid = None
-        job = VTONJob(
-            user_id=uid,
-            garment_image=(garment_url or "")[:2000],
-            person_image=(req.user_image or "")[:500] or None,
-            result_image=result.get("result_image"),
-            status=result.get("status", "error"),
-            vto_engine=result.get("engine", "idm-vton"),
-            error_message=result.get("detail") if result.get("status") == "error" else None,
-            processing_time_ms=result.get("processing_time_ms"),
-        )
-        db.add(job)
-        await db.flush()
-        job_id = str(job.id)
-        if user_id and result.get("status") == "completed":
-            from api.models.schema import UserEvent
-            db.add(UserEvent(
-                user_id=uid,
-                event_type="vton_completed",
-                payload={"job_id": job_id, "mode": req.mode},
-                weight=2.0,
-            ))
-            await db.flush()
-    except Exception:
-        logger.warning("Failed to persist widget VTON job", exc_info=True)
-        job_id = None
-        try:
-            await db.rollback()
-        except Exception:
-            logger.warning("Widget VTON job rollback failed", exc_info=True)
+        uid = uuid.UUID(user_id) if user_id else None
+    except (TypeError, ValueError):
+        uid = None
+    job_id = str(uuid.uuid4())
+    background_tasks.add_task(
+        _persist_vton_job_async,
+        uuid.UUID(job_id),
+        uid,
+        garment_url,
+        req.user_image,
+        None,
+        result,
+        {"job_id": job_id, "mode": req.mode},
+    )
 
     status = result.get("status", "error")
     result_image = result.get("result_image")
@@ -416,8 +440,9 @@ async def widget_try_on(
         "error": None if status == "completed" and result_image else message,
         "message": message,
     }
-    if job_id:
-        resp["job_id"] = job_id
+    if result.get("stages") is not None:
+        resp["stages"] = result["stages"]
+    resp["job_id"] = job_id
     return resp
 
 

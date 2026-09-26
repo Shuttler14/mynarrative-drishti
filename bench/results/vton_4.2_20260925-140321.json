@@ -1,0 +1,128 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "extraction_success_pct": 100.0,
+  "extraction_n": 5,
+  "extraction_ms": {
+   "p50": 20270.3357,
+   "p95": 24262.8803,
+   "p99": 24262.8803,
+   "n": 5,
+   "max": 24262.88
+  },
+  "vton_success_pct": 100.0,
+  "vton_failure_pct": 0.0,
+  "vton_n": 5,
+  "vton_generation_ms": {
+   "p50": 9248.1257,
+   "p95": 9826.3447,
+   "p99": 9826.3447,
+   "n": 5,
+   "max": 9826.34
+  },
+  "vton_generation_ms_p95": 9826.3447,
+  "e2e_vton_ms": {
+   "p50": 29518.4614,
+   "p95": 32830.2985,
+   "p99": 32830.2985,
+   "n": 5,
+   "max": 32830.3
+  },
+  "e2e_vton_ms_p95": 32830.2985,
+  "extraction_failure_pct": 0.0
+ },
+ "details": [
+  {
+   "id": "v01",
+   "extract_ms": 1493.9,
+   "tryon_ms": 9260.1,
+   "ok": true,
+   "stages": {
+    "download_ms": 306,
+    "create_ms": 3469,
+    "queue_ms": 24,
+    "load_ms": 0,
+    "predict_ms": 2935,
+    "poll_lag_ms": 937,
+    "total_ms": 7365,
+    "garments": 1,
+    "payload_kb": 483,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v02",
+   "extract_ms": 24262.9,
+   "tryon_ms": 8293.2,
+   "ok": true,
+   "stages": {
+    "download_ms": 226,
+    "create_ms": 3090,
+    "queue_ms": 38,
+    "load_ms": 0,
+    "predict_ms": 3778,
+    "poll_lag_ms": 467,
+    "total_ms": 7373,
+    "garments": 1,
+    "payload_kb": 689,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v03",
+   "extract_ms": 20270.3,
+   "tryon_ms": 9248.1,
+   "ok": true,
+   "stages": {
+    "download_ms": 273,
+    "create_ms": 4412,
+    "queue_ms": 31,
+    "load_ms": 0,
+    "predict_ms": 3596,
+    "poll_lag_ms": 293,
+    "total_ms": 8332,
+    "garments": 1,
+    "payload_kb": 701,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v04",
+   "extract_ms": 23004.0,
+   "tryon_ms": 9826.3,
+   "ok": true,
+   "stages": {
+    "download_ms": 172,
+    "create_ms": 2925,
+    "queue_ms": 25,
+    "load_ms": 0,
+    "predict_ms": 4186,
+    "poll_lag_ms": 1030,
+    "total_ms": 8166,
+    "garments": 1,
+    "payload_kb": 669,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v05",
+   "extract_ms": 12835.5,
+   "tryon_ms": 8662.6,
+   "ok": true,
+   "stages": {
+    "download_ms": 286,
+    "create_ms": 1448,
+    "queue_ms": 27,
+    "load_ms": 0,
+    "predict_ms": 2659,
+    "poll_lag_ms": 1227,
+    "total_ms": 5361,
+    "garments": 1,
+    "payload_kb": 664,
+    "preprocess_ms": 0
+   }
+  }
+ ],
+ "_ts": "2026-09-25T14:03:21",
+ "_kind": "vton"
+}

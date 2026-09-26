@@ -1,0 +1,123 @@
+{
+ "version": "4.2",
+ "metrics": {
+  "extraction_success_pct": 100.0,
+  "extraction_n": 5,
+  "extraction_ms": {
+   "p50": 10365.8697,
+   "p95": 12726.9821,
+   "p99": 12726.9821,
+   "n": 5,
+   "max": 12726.98
+  },
+  "vton_success_pct": 100.0,
+  "vton_failure_pct": 0.0,
+  "vton_n": 5,
+  "vton_generation_ms": {
+   "p50": 20273.5718,
+   "p95": 22802.1986,
+   "p99": 22802.1986,
+   "n": 5,
+   "max": 22802.2
+  },
+  "vton_generation_ms_p95": 22802.1986,
+  "e2e_vton_ms": {
+   "p50": 30102.271,
+   "p95": 33168.0682,
+   "p99": 33168.0682,
+   "n": 5,
+   "max": 33168.07
+  },
+  "e2e_vton_ms_p95": 33168.0682,
+  "extraction_failure_pct": 0.0
+ },
+ "details": [
+  {
+   "id": "v01",
+   "extract_ms": 1954.1,
+   "tryon_ms": 15360.8,
+   "ok": true,
+   "stages": {
+    "download_ms": 544,
+    "create_ms": 3226,
+    "queue_ms": 37,
+    "predict_ms": 2737,
+    "overhead_ms": 4810,
+    "total_ms": 7584,
+    "garments": 1,
+    "payload_kb": 483,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v02",
+   "extract_ms": 10365.9,
+   "tryon_ms": 22802.2,
+   "ok": true,
+   "stages": {
+    "download_ms": 219,
+    "create_ms": 4057,
+    "queue_ms": 29,
+    "predict_ms": 3940,
+    "overhead_ms": 16056,
+    "total_ms": 20025,
+    "garments": 1,
+    "payload_kb": 689,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v03",
+   "extract_ms": 9828.7,
+   "tryon_ms": 20273.6,
+   "ok": true,
+   "stages": {
+    "download_ms": 193,
+    "create_ms": 1613,
+    "queue_ms": 31,
+    "predict_ms": 4098,
+    "overhead_ms": 13337,
+    "total_ms": 17466,
+    "garments": 1,
+    "payload_kb": 701,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v04",
+   "extract_ms": 11385.9,
+   "tryon_ms": 9801.1,
+   "ok": true,
+   "stages": {
+    "download_ms": 332,
+    "create_ms": 2299,
+    "queue_ms": 27,
+    "predict_ms": 3655,
+    "overhead_ms": 2617,
+    "total_ms": 6299,
+    "garments": 1,
+    "payload_kb": 669,
+    "preprocess_ms": 0
+   }
+  },
+  {
+   "id": "v05",
+   "extract_ms": 12727.0,
+   "tryon_ms": 20324.9,
+   "ok": true,
+   "stages": {
+    "download_ms": 253,
+    "create_ms": 2784,
+    "queue_ms": 28,
+    "predict_ms": 2690,
+    "overhead_ms": 15322,
+    "total_ms": 18040,
+    "garments": 1,
+    "payload_kb": 664,
+    "preprocess_ms": 0
+   }
+  }
+ ],
+ "_ts": "2026-09-25T13:44:29",
+ "_kind": "vton"
+}
