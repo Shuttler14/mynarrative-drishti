@@ -424,6 +424,17 @@ async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
             price = int(prices[0].replace(",", "")) if prices else 0
             mrp = int(prices[1].replace(",", "")) if len(prices) > 1 else price
 
+            # Product image lives in the same data-id card (class="MZeksS").
+            # Was hardcoded "" → every Flipkart item died at the image gate.
+            image_url = ""
+            img_m = re.search(r'<img[^>]+src="(https://rukminim[^"]+)"', chunk)
+            if not img_m:
+                img_m = re.search(r'<img[^>]+src="(//rukminim[^"]+)"', chunk)
+            if img_m:
+                image_url = img_m.group(1)
+                if image_url.startswith("//"):
+                    image_url = f"https:{image_url}"
+
             rm = re.search(r'(\d+\.?\d*)\s*★', chunk)
             rating = float(rm.group(1)) if rm else 0
 
@@ -438,7 +449,7 @@ async def scrape_flipkart(query: str, max_results: int = 10) -> list[dict]:
                     "discount_pct": int((1 - price / mrp) * 100) if mrp > price else 0,
                     "rating": rating,
                     "rating_count": 0,
-                    "image_url": "",
+                    "image_url": image_url,
                     "url": link or search_url,
                     "color": "",
                     "category": "",
