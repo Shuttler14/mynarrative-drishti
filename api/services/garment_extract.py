@@ -380,7 +380,7 @@ def _norm_garment_type(garment_type: str | None) -> str:
 # with the real bottom). Fixed fractions are unreliable — a knee-up shot ends
 # at the knees, so its hem sits at ~0.90, not the full-body ~0.55 — the
 # primary path finds the actual garment→pants color boundary per image.
-_BAND_VERSION = "b3"
+_BAND_VERSION = "b4"
 _FULL_FALLBACK: dict[str, tuple[float, float]] = {
     "top": (0.0, 0.58),
     "bottom": (0.42, 1.0),
@@ -420,7 +420,7 @@ def _find_boundary(L: np.ndarray, lo: float, hi: float, smooth: int) -> int | No
 
     Sustained = BOTH halves of the remainder after the edge still differ from
     the region before it (kills one-off prints/shadows; pants run to frame end).
-    Returns the absolute row (bbox coords) to cut at, or None.
+    Returns the row index RELATIVE to the bbox start (0..len(L)-1), or None.
     """
     h = len(L)
     i0, i1 = int(h * lo), int(h * hi)
@@ -449,6 +449,54 @@ def _find_boundary(L: np.ndarray, lo: float, hi: float, smooth: int) -> int | No
             # window [i, i+smooth] straddles the step → step is at i+smooth
             return min(i + smooth, h - 1)
     return None
+
+
+def _find_all_boundaries(L: np.ndarray, smooth: int, lo: float = 0.0,
+                         hi: float = 1.0, max_cuts: int = 8) -> list[int]:
+    """Every sustained color change in [lo, hi), top-down, bbox-relative."""
+    h = len(L)
+    valid = ~np.isnan(L)
+    if valid.sum() < smooth:
+        return []
+    Li = np.interp(np.arange(h), np.where(valid)[0], L[valid])
+    cuts: list[int] = []
+    start = float(lo)
+    while start < hi:
+        c = _find_boundary(Li, start, hi, smooth)
+        if c is None:
+            break
+        cuts.append(int(c))
+        start = (c + smooth + 1) / h
+    return cuts
+
+
+def _pick_bottom_band(L: np.ndarray, framing: str) -> tuple[float, float] | None:
+    """Vertical band containing the bottom garment (bbox-relative fractions).
+
+    One boundary was inverted on mid-framed shots: the first luminance change
+    INSIDE the pants is the hem (pants→skin), and (hem, 1.0) kept only
+    legs/shoes while the trousers never reached VTON — the user's outfit
+    simply didn't appear in the try-on. Instead: split the silhouette at
+    every sustained boundary and take the longest segment that starts in the
+    upper half (bottom garments hang from the waist; legs/shoes below the
+    hem must not qualify). Ties go to the lower segment.
+    """
+    h = len(L)
+    smooth = max(15, int(h * 0.04))
+    cuts = _find_all_boundaries(L, smooth)
+    edges = [0] + cuts + [h]
+    min_len = max(16, int(0.10 * h))
+    best: tuple[int, int] | None = None
+    for a, b in zip(edges[:-1], edges[1:]):
+        if b - a < min_len or a >= 0.5 * h:
+            continue
+        if best is None or (b - a) >= (best[1] - best[0]):
+            best = (a, b)
+    if best is None:
+        if framing == "full":
+            return _FULL_FALLBACK["bottom"]
+        return None  # frame already garment-focused (or ambiguous) — keep all
+    return (best[0] / h, best[1] / h)
 
 
 def _framing(binary, rgb: np.ndarray, bbox: tuple[int, int, int, int]) -> str:
@@ -575,31 +623,19 @@ def _post_process_garment(image_bytes: bytes, garment_type: str = "auto") -> byt
                     hi = 0.82 if framing == "full" else 1.0
                     cut = _find_boundary(L, lo, hi, smooth)
                     if cut is not None:
-                        band = (0.0, (cut - y1b) / h)
+                        band = (0.0, cut / h)
                     elif framing == "full":
                         band = _FULL_FALLBACK["top"]
                 elif gtype == "bottom":
-                    if framing == "lower":
-                        cut = _find_boundary(L, 0.0, 0.35, smooth)
-                        if cut is not None:
-                            band = ((cut - y1b) / h, 1.0)
-                        # no boundary → frame is already pants-focused
-                    elif framing == "full":
-                        cut = _find_boundary(L, 0.20, 0.75, smooth)
-                        if cut is not None:
-                            band = ((cut - y1b) / h, 1.0)
-                        else:
-                            band = _FULL_FALLBACK["bottom"]
-                    else:  # upper / mid
-                        cut = _find_boundary(L, 0.40, 1.0, smooth)
-                        if cut is not None:
-                            band = ((cut - y1b) / h, 1.0)
+                    # segment-based pick — see _pick_bottom_band for why a
+                    # single boundary shipped shoes instead of trousers
+                    band = _pick_bottom_band(L, framing)
                 else:  # shoes — feet must be in frame; scan starts below any
                     # shirt→pants boundary (that would catch trousers, not shoes)
                     if framing in ("full", "lower"):
                         cut = _find_boundary(L, 0.72, 1.0, smooth)
                         if cut is not None:
-                            band = ((cut - y1b) / h, 1.0)
+                            band = (cut / h, 1.0)
                         elif framing == "full":
                             band = _FULL_FALLBACK["shoes"]
                         else:
