@@ -182,3 +182,21 @@ def test_office_formalize_is_a_noop_when_formal_already_present():
     qs = [("primary", "women formal shirt office wear")]
     office = fe.build_intent(occasion="work", gender="female")
     assert fe._office_formalize(qs, office) == qs
+
+
+def test_budget_floor_is_soft_for_user_ranges():
+    """₹4000 look budget → per-piece floor ₹929, but marketplace formalwear
+    sells at ₹300–900 — a hard floor starved every office draw. Ceiling stays
+    hard; level-mode bands keep the floor (quality window)."""
+    intent = fe.build_intent(occasion="work", gender="female",
+                             budget_min=929, budget_max=2071)
+    cheap_formal = _p("Women Formal Slim Fit Trouser", "bottom", 449, "trousers")
+    over_max = _p("Women Premium Formal Blazer", "top", 2599, "blazer")
+    passed = fe.hard_filter([cheap_formal, over_max], intent, (929.0, 2071.0))
+    assert [p["title"] for p in passed] == ["Women Formal Slim Fit Trouser"], [
+        p["title"] for p in passed]
+    # level mode still enforces the floor
+    level_intent = dict(fe.build_intent(occasion="casual", gender="female"),
+                       budget_mode="level")
+    level_passed = fe.hard_filter([cheap_formal], level_intent, (929.0, 2071.0))
+    assert level_passed == [], "level band must keep its quality floor"

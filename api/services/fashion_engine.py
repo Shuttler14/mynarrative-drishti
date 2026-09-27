@@ -733,11 +733,18 @@ def _gender_ok(title: str, gender: str) -> bool:
     return gender_ok(title, gender)
 
 
-def _price_in_band(price: float, band: tuple[float, float] | None) -> bool:
+def _price_in_band(price: float, band: tuple[float, float] | None, *, enforce_floor: bool = True) -> bool:
     if not band:
         return True
     lo, hi = band
-    return lo <= price <= hi
+    if price > hi:
+        return False
+    # Floor is soft for user budget ranges (RECO-v4.3): the wizard derives a
+    # per-piece floor from the total look budget (₹4000 → ₹929) but Indian
+    # marketplace formalwear mostly sells at ₹300–900 — a hard floor starved
+    # every office draw. Budget scoring still prefers in-band items. Level
+    # mode keeps the floor: there the band IS a quality window, not a budget.
+    return price >= lo if enforce_floor else True
 
 
 def _office_western_strict(intent: dict) -> bool:
@@ -799,12 +806,15 @@ def hard_filter(
     occasion = intent.get("occasion", "casual")
     strict_western = _office_western_strict(intent)
     office_formal = _office_formal_required(intent)
+    # User-budget bands (range/around/legacy): ceiling hard, floor soft.
+    # Level bands keep both — the band is the level's quality window.
+    keep_floor = intent.get("budget_mode") == "level"
     out = []
     for p in products:
         price = p.get("price") or 0
         if price <= 0:
             continue
-        if not _price_in_band(price, band):
+        if not _price_in_band(price, band, enforce_floor=keep_floor):
             continue
         if not _gender_ok(p.get("title", ""), intent.get("gender", "")):
             continue
@@ -816,7 +826,7 @@ def hard_filter(
             slot = (p.get("fashion") or {}).get("slot", "")
             if slot in ("shoes", "accessory"):
                 # Footwear: formal-adjacent only (no beach/ethnic/casual sport)
-                if any(k in t for k in ("flip flop", "slider", "jutti", "mojari", "kolhapuri", "sport", "running", "trainer")):
+                if any(k in t for k in ("flip flop", "slider", "jutti", "mojari", "kolhapuri", "sport", "running", "trainer", "beach", "floaters")):
                     continue
             else:
                 if any(k in t for k in _OFFICE_CASUAL_REJECT):
