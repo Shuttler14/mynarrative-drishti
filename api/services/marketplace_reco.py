@@ -345,8 +345,10 @@ async def search_marketplace_products(
     if not missing and len(result.get("selected") or []) < min(count, 4):
         missing.append("primary")
     if missing:
-        sq_map = dict(slot_queries)
-        retry = [(s, sq_map[s]) for s in missing if s in sq_map]
+        want = set(missing)
+        # ALL queries for the missing slots — a dict keyed by slot would keep
+        # only the last primary query, starving the re-scrape of the others.
+        retry = [(s, q) for s, q in slot_queries if s in want]
         if retry:
             logger.info(f"Slot coverage retry: re-scraping {sorted(missing)}")
             done = await asyncio.gather(

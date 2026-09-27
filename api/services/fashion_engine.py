@@ -563,6 +563,24 @@ _QUERY_VARIATIONS: dict[str, list[str]] = {
 
 import random as _random
 
+def _office_formalize(queries: list[tuple[str, str]], intent: dict) -> list[tuple[str, str]]:
+    """Office draws must ASK for formal-titled results on every wear mode.
+
+    Blueprint queries like "women blue straight kurta cotton office wear"
+    return titles with no formal signal ("office wear" rarely survives into
+    the product title), which the office gate then rejects → starved pools.
+    Gate wording is unchanged; only the search query is steered. (RECO-v4.3)
+    """
+    if not _office_formal_required(intent):
+        return queries
+    out: list[tuple[str, str]] = []
+    for slot, q in queries:
+        if "formal" not in q.lower():
+            q = f"formal {q}"
+        out.append((slot, q))
+    return out
+
+
 def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 6) -> list[tuple[str, str]]:
     """Generate slot-labelled Google Shopping queries via the outfit blueprint compiler.
 
@@ -586,7 +604,7 @@ def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 6) -> li
         ]
         compiled = frules.compile_blueprint_queries(blueprints, intent, max_queries=max_queries)
         if compiled:
-            return [(c["slot"], c["query"]) for c in compiled]
+            return _office_formalize([(c["slot"], c["query"]) for c in compiled], intent)
     except Exception as exc:
         logger.warning(f"Blueprint query compile failed, falling back to static slots: {exc}")
 
@@ -626,7 +644,7 @@ def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 6) -> li
         if len(queries) >= max_queries:
             break
 
-    return queries[:max_queries]
+    return _office_formalize(queries[:max_queries], intent)
 
 
 # ══════════════════════════════════════════════════════════════

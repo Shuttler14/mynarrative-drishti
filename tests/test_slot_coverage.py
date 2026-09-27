@@ -159,3 +159,26 @@ def test_office_formal_signal_contract_matches_golden():
     passed = fe.hard_filter([plain_kurta, formal_kurta, set_kurta], office, None)
     titles = [p["title"] for p in passed]
     assert titles == ["Men's Formal Silk Kurta"], titles
+
+
+def test_office_slot_queries_always_ask_for_formal():
+    """Starved office draws traced to blueprint queries without 'formal'
+    ('women blue straight kurta cotton office wear') — results carry no
+    formal signal in their titles → gate rejects everything."""
+    office = fe.build_intent(occasion="work", gender="female",
+                             budget_min=929, budget_max=2071,
+                             user_prefs={"wear_weights": {}})
+    queries = fe.build_slot_queries(office, count=6)
+    assert queries, "no slot queries generated"
+    for slot, q in queries:
+        assert "formal" in q.lower(), f"{slot} query lacks formal wording: {q}"
+    # non-office intents must be untouched
+    casual = fe.build_intent(occasion="casual", gender="female")
+    qs = [("primary", "women blue straight kurta cotton")]
+    assert fe._office_formalize(qs, casual) == qs
+
+
+def test_office_formalize_is_a_noop_when_formal_already_present():
+    qs = [("primary", "women formal shirt office wear")]
+    office = fe.build_intent(occasion="work", gender="female")
+    assert fe._office_formalize(qs, office) == qs

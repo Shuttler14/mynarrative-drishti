@@ -378,22 +378,55 @@ async def recommend_outfits(
                     filtered = hard_filter(candidates, intent, None)
 
                 recommendations = []
-                for p in filtered:
-                    recommendations.append({
-                        "product_id": p.get("shopify_id", ""),
-                        "title": p.get("title", ""),
-                        "category": (p.get("fashion") or {}).get("category") or p.get("category", ""),
-                        "slot": (p.get("fashion") or {}).get("slot", ""),
-                        "price": p.get("price", 0),
-                        "currency": "INR",
-                        "image_url": p.get("image_url", ""),
-                        "url": p.get("url", ""),
-                        "score": round(float(p.get("_final") or p.get("score") or 0), 3),
-                        "source": "vector_search",
-                        "reason": f"Matches your {style or occasion or 'style'} style",
-                    })
-                    if len(recommendations) >= req.count:
-                        break
+                # Assemble through the outfit engine when possible — a flat
+                # list is tops-heavy and unvalidated (RECO-v4.3: complete
+                # looks, validated dress code). Flat list stays as last resort.
+                try:
+                    from api.services.fashion_engine import recommend_products
+                    rec = recommend_products(filtered, intent, req.count)
+                    assembled = rec.get("selected") or []
+                    validation = rec.get("validation") or {}
+                except Exception:
+                    assembled, validation = [], {}
+                if assembled:
+                    for p in assembled:
+                        recommendations.append({
+                            "product_id": p.get("shopify_id", ""),
+                            "title": p.get("title", ""),
+                            "category": (p.get("fashion") or {}).get("category") or p.get("category", ""),
+                            "slot": (p.get("fashion") or {}).get("slot", ""),
+                            "price": p.get("price", 0),
+                            "currency": "INR",
+                            "image_url": p.get("image_url", ""),
+                            "url": p.get("url", ""),
+                            "score": round(float(p.get("_final") or p.get("score") or 0), 3),
+                            "source": "vector_search",
+                            "reason": f"Matches your {style or occasion or 'style'} style",
+                        })
+                        if len(recommendations) >= req.count:
+                            break
+                    if recommendations:
+                        return {"recommendations": recommendations, "count": len(recommendations),
+                                "source": "vector_search", "reco_version": RECO_VERSION,
+                                "outfit_validation": validation,
+                                "looks": (intent.get("blueprints") or [])[:3]}
+                if not recommendations:
+                    for p in filtered:
+                        recommendations.append({
+                            "product_id": p.get("shopify_id", ""),
+                            "title": p.get("title", ""),
+                            "category": (p.get("fashion") or {}).get("category") or p.get("category", ""),
+                            "slot": (p.get("fashion") or {}).get("slot", ""),
+                            "price": p.get("price", 0),
+                            "currency": "INR",
+                            "image_url": p.get("image_url", ""),
+                            "url": p.get("url", ""),
+                            "score": round(float(p.get("_final") or p.get("score") or 0), 3),
+                            "source": "vector_search",
+                            "reason": f"Matches your {style or occasion or 'style'} style",
+                        })
+                        if len(recommendations) >= req.count:
+                            break
 
                 if recommendations:
                     return {"recommendations": recommendations, "count": len(recommendations), "source": "vector_search", "reco_version": RECO_VERSION}
