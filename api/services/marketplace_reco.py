@@ -323,6 +323,60 @@ async def search_marketplace_products(
         enrich_product(p)
 
     result = recommend_products(products, intent, count)
+
+    # Coverage guarantee: one flaky scrape draw can deliver zero usable body
+    # garments (slot fill has nothing to pull from) → outfit ships without a
+    # top or bottom. One targeted re-scrape of the missing body slot(s),
+    # then re-run the pipeline. Keeps the server contract: work/casual looks
+    # always carry top + bottom when the marketplace has them.
+    def _missing_body_slots(sel: list[dict]) -> list[str]:
+        slots = {(p.get("fashion") or {}).get("slot", "") for p in sel}
+        missing = []
+        if not (slots & {"top", "full"}):
+            missing.append("primary")
+        if "bottom" not in slots:
+            missing.append("bottom")
+        return missing
+
+    missing = _missing_body_slots(result.get("selected") or [])
+    if missing:
+        sq_map = dict(slot_queries)
+        retry = [(s, sq_map[s]) for s in missing if s in sq_map]
+        if retry:
+            logger.info(f"Slot coverage retry: re-scraping {sorted(missing)}")
+            done = await asyncio.gather(
+                *[_scraper_fallback(q) for _, q in retry],
+                return_exceptions=True,
+            )
+            existing = {(p.get("source"), p.get("product_id")) for p in products}
+            fresh: list[dict] = []
+            for (slot, _q), res in zip(retry, done):
+                if isinstance(res, Exception):
+                    logger.warning(f"Coverage retry '{slot}' failed: {res}")
+                    continue
+                added = 0
+                for p in res:
+                    key = (p.get("source"), p.get("product_id"))
+                    if key in existing:
+                        continue
+                    existing.add(key)
+                    p.setdefault("query_slot", slot)
+                    products.append(p)
+                    fresh.append(p)
+                    added += 1
+                    if added >= 3:
+                        break
+            if fresh:
+                logger.info(f"Slot coverage retry added {len(fresh)} items")
+                for p in fresh:
+                    enrich_product(p)
+                result = recommend_products(products, intent, count)
+                result["intent"] = intent
+                result["blueprints"] = intent.get("blueprints", [])
+                still = _missing_body_slots(result.get("selected") or [])
+                if still:
+                    logger.warning(f"Slot coverage retry still missing {sorted(still)}")
+
     result["intent"] = intent
     result["blueprints"] = intent.get("blueprints", [])
     return result

@@ -28,6 +28,7 @@ Every release: (1) bump `RECO_VERSION` in `api/services/reco_version.py`,
 | **RECO-v4.0** | 2026-09-20 | Fashion DNA + Intelligence | `fashion_engine.py` intent system (`build_intent`, scoring, `hard_filter`), `fashion_rules_v1.json` outfit grammar, price intelligence, weather/geolocation, Fashion DNA soft prefs, pinned VTON | `99c20ec` |
 | **RECO-v4.1** | 2026-09-24 | Office Diversity + Slot Fixes | Office outfit diversification (no more shirts-only), skip bottom slot when full-outfit (saree/dress/kurta set) selected | `2c802f5`, `e481b59` |
 | **RECO-v4.2** | 2026-09-25 | Formal-Only Gate + Stability | Office/western formal-only gate (`_office_western_strict` + `_office_formal_required` + `_OFFICE_FORMAL_SIGNALS`), scraper 6s/source + 10/15s deadlines, office-office rescue, **first benchmarked release (this file + `bench/`)** | `9832a87` |
+| **RECO-v4.3** | 2026-09-27 | Slot Coverage + Image Gate | `_fill_missing_slots` (gate-starved top/bottom top-up, 2-pass formal→relaxed), slot-coverage re-scrape retry (no more footwear-only draws), imageless-product gate in `recommend_products`, office golden-contract tests + work-outfit 24-combo variation matrix | `e4f67c2` |
 
 \* typo guard: v3.0 commits are `92f9397` (SerpApi) and `ece193c` (16s reco + pricing).
 
@@ -38,6 +39,8 @@ Every release: (1) bump `RECO_VERSION` in `api/services/reco_version.py`,
 | EXTRACT-v1 | 2026-07-02 | rembg IS-Net pipeline | Local rembg + R2 upload + VTON integration | `be69487`, `544b77f`, `d198ddc` |
 | EXTRACT-v2 | 2026-07-02 | Replicate rembg | Local inference replaced by hosted silueta/rembg | `51814f5`, `51509cf` |
 | **EXTRACT-b3** | 2026-09-25 | Boundary band-crop | Median-luminance boundary detection, framing detection, feet rule — VTON receives **only the target garment**; presigned R2 URLs | `9832a87` |
+| EXTRACT-b4 | 2026-09-27 | Segment bottom-pick | Single-boundary scan inverted on mid-framed shots (hem = first change inside pants → shoes shipped); segment-based pick, coordinate fix, full-framing fallback | `d0238d3` |
+| **EXTRACT-b5** | 2026-09-27 | Head-aware bottom pick | b4 picked head+kurta as "bottom" on waist-boundary-less listing shots (pale kurta, bare legs); head zone now ineligible, headless frames keep upper-half rule, no candidate → keep whole silhouette | `e4f67c2` |
 | FASHION_RULES-v1 | 2026-09-20 | Outfit grammar v1 | Hard exclusions, occasion gates, garment never_with, dress codes | `99c20ec`, `9832a87` |
 
 ## How each version was judged

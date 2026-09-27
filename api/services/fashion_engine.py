@@ -759,6 +759,9 @@ _OFFICE_ETHNIC_REJECT = (
 )
 # Body garments must show at least one formal/office signal (user: "only formal")
 # NOTE: casual rejects (t-shirt/hoodie/...) run FIRST, so bare "shirt" is safe here.
+# Contract (golden f02/f07): bare "kurta" is NOT a signal — ethnic tops pass only
+# with a real formal marker ("Formal Silk Kurta"); set pieces ("...with Dupatta")
+# stay rejected for office.
 _OFFICE_FORMAL_SIGNALS = (
     "formal", "office", "business", "tailored", "blazer", "suit",
     "trouser", "chino", "pencil", "button-down", "button down", "oxford",
@@ -860,6 +863,64 @@ def _rescue_slot_coverage(pool: list[dict], relevant: list[dict], intent: dict) 
             "Budget-band rescue added %d items for slots %s",
             len(extras),
             sorted(added_counts),
+        )
+    return pool + extras
+
+
+def _fill_missing_slots(pool: list[dict], relevant: list[dict], intent: dict) -> list[dict]:
+    """Top-up missing top/bottom slots from the gender-filtered inventory.
+
+    A non-empty pool can still be starved: office looks came back footwear-only
+    when every body garment died at the formal-signal gate (or the tight band —
+    the band rescue only covers bottom/shoes). Fill from `relevant` with a
+    two-pass gate: formal-signal ON first (keeps the dress code), then relaxed
+    if still starved. Occasion/gender/casual/ethnic/price>0 gates always stay.
+    Cap 3 items per missing slot.
+    """
+    if not pool:
+        # Empty pools are handled by the caller's degradation chain
+        # (formal-degrade, level-degrade) — don't preempt it here.
+        return pool
+    have = {(p.get("fashion") or {}).get("slot", "") for p in pool}
+    need: set[str] = set()
+    if not (have & {"top", "full"}):
+        need.add("top")
+    if "bottom" not in have:
+        need.add("bottom")
+    if not need:
+        return pool
+
+    in_pool = {id(p) for p in pool}
+    added: dict[str, int] = {}
+    extras: list[dict] = []
+
+    def _pass(require_formal_signal: bool) -> None:
+        for p in relevant:
+            if not need:
+                return
+            if id(p) in in_pool:
+                continue
+            slot = (p.get("fashion") or {}).get("slot", "")
+            if slot == "full" and "top" in need:
+                slot = "top"
+            if slot not in need:
+                continue
+            if not hard_filter([p], intent, None, require_formal_signal=require_formal_signal):
+                continue
+            extras.append(p)
+            in_pool.add(id(p))
+            added[slot] = added.get(slot, 0) + 1
+            if added[slot] >= 3:
+                need.discard(slot)
+
+    _pass(require_formal_signal=True)
+    if need:
+        _pass(require_formal_signal=False)
+    if extras:
+        logger.info(
+            "Slot-coverage fill added %d items for slots %s",
+            len(extras),
+            sorted(added),
         )
     return pool + extras
 
@@ -1356,7 +1417,12 @@ def recommend_products(products: list[dict], intent: dict, count: int) -> dict:
     """
     # Gender/kids filter first — the distribution should reflect what is
     # actually available for this user, not the raw search pool.
-    relevant = [p for p in products if gender_ok(p.get("title", ""), intent.get("gender", ""))]
+    # Imageless products are unusable (blank widget card, VTON 400) — drop them.
+    relevant = [
+        p for p in products
+        if gender_ok(p.get("title", ""), intent.get("gender", ""))
+        and (p.get("image_url") or "").strip()
+    ]
 
     dist = price_distribution(relevant)
     band = resolve_band(intent, dist)
@@ -1378,6 +1444,8 @@ def recommend_products(products: list[dict], intent: dict, count: int) -> dict:
 
     # Rescue missing bottom/shoes inventory lost to a tight budget band
     pool = _rescue_slot_coverage(pool, relevant, intent)
+    # Top-up missing top/bottom slots (gate-starved body garments)
+    pool = _fill_missing_slots(pool, relevant, intent)
 
     if not pool and relevant and _office_formal_required(intent):
         # Formal-signal gate starved the pool (inventory was all soft/casual

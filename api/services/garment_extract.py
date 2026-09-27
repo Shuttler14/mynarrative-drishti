@@ -380,7 +380,7 @@ def _norm_garment_type(garment_type: str | None) -> str:
 # with the real bottom). Fixed fractions are unreliable — a knee-up shot ends
 # at the knees, so its hem sits at ~0.90, not the full-body ~0.55 — the
 # primary path finds the actual garment→pants color boundary per image.
-_BAND_VERSION = "b4"
+_BAND_VERSION = "b5"
 _FULL_FALLBACK: dict[str, tuple[float, float]] = {
     "top": (0.0, 0.58),
     "bottom": (0.42, 1.0),
@@ -473,22 +473,38 @@ def _find_all_boundaries(L: np.ndarray, smooth: int, lo: float = 0.0,
 def _pick_bottom_band(L: np.ndarray, framing: str) -> tuple[float, float] | None:
     """Vertical band containing the bottom garment (bbox-relative fractions).
 
-    One boundary was inverted on mid-framed shots: the first luminance change
-    INSIDE the pants is the hem (pants→skin), and (hem, 1.0) kept only
-    legs/shoes while the trousers never reached VTON — the user's outfit
-    simply didn't appear in the try-on. Instead: split the silhouette at
-    every sustained boundary and take the longest segment that starts in the
-    upper half (bottom garments hang from the waist; legs/shoes below the
-    hem must not qualify). Ties go to the lower segment.
+    Two failure modes this segment picker walks between:
+    - b3: first luminance change INSIDE the pants is the hem → band=(hem,1.0)
+      kept legs/shoes and the trousers never reached VTON.
+    - b4 (first cut): "longest segment starting in the upper half" picked the
+      HEAD+TORSO segment on waist-boundary-less photos (pale kurta on white,
+      bare legs below the hem — Amazon full-outfit listing shots): the only
+      bottom-ward segment started at the hem (>= 0.5h), was ineligible, and
+      the head+kurta segment won — a top garment shipped as the bottom.
+
+    Rules: segment must clear min length; when the frame HAS a head
+    (full/upper), it must start below the head zone (0.18h — the garment
+    cannot contain the head) and before the lower half (0.5h — below that is
+    legs/shoes, not the garment). Headless frames keep the original rule
+    (start in the upper half: waist-hung pants qualify, legs don't).
+    No eligible segment → full framing gets the fixed fallback, otherwise
+    None = "keep the whole silhouette" (safe: the garment stays in view).
     """
     h = len(L)
     smooth = max(15, int(h * 0.04))
     cuts = _find_all_boundaries(L, smooth)
     edges = [0] + cuts + [h]
     min_len = max(16, int(0.10 * h))
+    head_present = framing in ("full", "upper")
+    head_zone = 0.18 * h
     best: tuple[int, int] | None = None
     for a, b in zip(edges[:-1], edges[1:]):
-        if b - a < min_len or a >= 0.5 * h:
+        if b - a < min_len:
+            continue
+        if head_present:
+            if not (head_zone <= a < 0.5 * h):
+                continue
+        elif a >= 0.5 * h:
             continue
         if best is None or (b - a) >= (best[1] - best[0]):
             best = (a, b)

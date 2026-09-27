@@ -86,3 +86,31 @@ def test_flatlay_passes_through_unbanded():
     a = np.array(Image.open(io.BytesIO(out)).convert("RGB")).astype(int)
     mid = a[a.shape[0] // 2, a.shape[1] // 2]
     assert abs(int(mid.mean()) - 120) < 25, f"flat-lay garment altered: center={mid}"
+
+
+PALE = (232, 236, 214)  # pale kurta — near-white, no waist boundary on white bg
+
+# Head + pale knee-length kurta + bare wide legs, NO visible bottom garment
+# (Amazon full-outfit listing shot, white-on-white). b4 picked the
+# head+kurta segment as "bottom"; b5 must keep the whole silhouette.
+KURTA_NO_BOTTOM = [
+    (0, 90, 60, SKIN), (90, 620, 160, PALE), (620, 800, 110, SKIN),
+]
+
+
+def test_bottom_never_ships_head_torso_on_bottomless_photo():
+    out = _post_process_garment(_synth(KURTA_NO_BOTTOM), "bottom")
+    a = np.array(Image.open(io.BytesIO(out)).convert("RGB")).astype(int)
+    lum = 0.299 * a[:, :, 0] + 0.587 * a[:, :, 1] + 0.114 * a[:, :, 2]
+    nonwhite = lum < 245
+    # legs (skin rows) must survive — b4 cropped them out and shipped the
+    # head+kurta as the bottom garment
+    bottom = nonwhite[int(a.shape[0] * 0.85):]
+    skinish = ((a[:, :, 0] > 190) & (a[:, :, 1] < 210) & (a[:, :, 0] > a[:, :, 1] + 15))
+    skin_bottom = skinish[int(a.shape[0] * 0.85):]
+    assert skin_bottom.sum() > 0 and bottom.sum() > 0, (
+        "legs region vanished — head+kurta shipped as the bottom garment again")
+    # head must be part of the kept silhouette (keep-all fallback), not a
+    # band that starts mid-torso
+    (w, h), _, _ = _stats(out)
+    assert h >= 750, f"expected full-silhouette keep-all, got h={h}"

@@ -8,12 +8,12 @@ Every bump: update RECO_VERSIONS.md, run `python bench/run_bench.py gates`,
 save the scorecard under the new version.
 """
 
-RECO_VERSION = "4.2"
-RECO_NAME = "Formal-Only Gate + Stability"
-RECO_RELEASED = "2026-09-25"
+RECO_VERSION = "4.3"
+RECO_NAME = "Slot Coverage + Image Gate"
+RECO_RELEASED = "2026-09-27"
 
 # Companion pipeline versions (reported alongside, versioned independently)
-EXTRACT_VERSION = "b3"      # garment band-crop (api/services/garment_extract.py)
+EXTRACT_VERSION = "b5"      # garment band-crop (api/services/garment_extract.py)
 FASHION_RULES_VERSION = "v1"  # api/data/fashion_rules_v1.json
 
 
