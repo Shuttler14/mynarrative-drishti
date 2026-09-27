@@ -831,13 +831,14 @@ def _rescue_slot_coverage(pool: list[dict], relevant: list[dict], intent: dict) 
 
     A tight band (e.g. ₹929–2071 from dnaBudget) often eliminates footwear and
     trousers while leaving cheap tops — which is how office looks became shirts-only.
+    Band is the ONLY gate this bypasses: style/casual/ethnic/formal/occasion gates
+    still run per item (a "Sport Sandal" must not sneak into an office look).
     """
     have = {(p.get("fashion") or {}).get("slot", "") for p in pool}
     missing = {s for s in ("bottom", "shoes") if s not in have}
     if not missing:
         return pool
 
-    occasion = intent.get("occasion", "casual")
     in_pool = {id(p) for p in pool}
     added_counts: dict[str, int] = {}
     extras: list[dict] = []
@@ -849,9 +850,8 @@ def _rescue_slot_coverage(pool: list[dict], relevant: list[dict], intent: dict) 
         slot = (p.get("fashion") or {}).get("slot", "")
         if slot not in missing:
             continue
-        if (p.get("price") or 0) <= 0:
-            continue
-        if not frules.occasion_ok(p, occasion):
+        # Band bypass is the point of rescue; every other gate still applies.
+        if not hard_filter([p], intent, None, require_formal_signal=True):
             continue
         extras.append(p)
         in_pool.add(id(p))
@@ -872,14 +872,14 @@ def _fill_missing_slots(pool: list[dict], relevant: list[dict], intent: dict) ->
 
     A non-empty pool can still be starved: office looks came back footwear-only
     when every body garment died at the formal-signal gate (or the tight band —
-    the band rescue only covers bottom/shoes). Fill from `relevant` with a
-    two-pass gate: formal-signal ON first (keeps the dress code), then relaxed
-    if still starved. Occasion/gender/casual/ethnic/price>0 gates always stay.
-    Cap 3 items per missing slot.
+    the band rescue only covers bottom/shoes). Fill from `relevant` with the
+    full hard gate ON (band bypassed, all style gates kept). Office never
+    relaxes the formal signal: a starved office draw degrades to fewer/no
+    items, not to ethnic-casual inventory (RECO-v4.3 contract).
     """
     if not pool:
-        # Empty pools are handled by the caller's degradation chain
-        # (formal-degrade, level-degrade) — don't preempt it here.
+        # Empty pools are handled by the caller's degradation chain —
+        # don't preempt it here.
         return pool
     have = {(p.get("fashion") or {}).get("slot", "") for p in pool}
     need: set[str] = set()
@@ -894,7 +894,7 @@ def _fill_missing_slots(pool: list[dict], relevant: list[dict], intent: dict) ->
     added: dict[str, int] = {}
     extras: list[dict] = []
 
-    def _pass(require_formal_signal: bool) -> None:
+    def _pass() -> None:
         for p in relevant:
             if not need:
                 return
@@ -905,7 +905,7 @@ def _fill_missing_slots(pool: list[dict], relevant: list[dict], intent: dict) ->
                 slot = "top"
             if slot not in need:
                 continue
-            if not hard_filter([p], intent, None, require_formal_signal=require_formal_signal):
+            if not hard_filter([p], intent, None, require_formal_signal=True):
                 continue
             extras.append(p)
             in_pool.add(id(p))
@@ -913,9 +913,7 @@ def _fill_missing_slots(pool: list[dict], relevant: list[dict], intent: dict) ->
             if added[slot] >= 3:
                 need.discard(slot)
 
-    _pass(require_formal_signal=True)
-    if need:
-        _pass(require_formal_signal=False)
+    _pass()
     if extras:
         logger.info(
             "Slot-coverage fill added %d items for slots %s",
@@ -1447,21 +1445,29 @@ def recommend_products(products: list[dict], intent: dict, count: int) -> dict:
     # Top-up missing top/bottom slots (gate-starved body garments)
     pool = _fill_missing_slots(pool, relevant, intent)
 
-    if not pool and relevant and _office_formal_required(intent):
-        # Formal-signal gate starved the pool (inventory was all soft/casual
-        # titles). Keep ethnic/casual rejections but drop the must-be-formal
-        # signal so office western still returns outfits instead of 0.
-        pool = hard_filter(relevant, intent, band, require_formal_signal=False)
-        if not pool:
-            pool = hard_filter(relevant, intent, None, require_formal_signal=False)
+    # RECO-v4.3 contract: office never drops the formal signal. The old
+    # "pool empty → require_formal_signal=False" degrade shipped ethnic sets
+    # (kurta + dupatta) and casual tops as office looks. Recovery is the
+    # band-widen above + gated rescue/fill + the marketplace re-scrape;
+    # beyond that an honest empty draw beats a non-formal one.
 
     if not pool and is_level and relevant:
         # Level is a preference, not a hard budget — degrade to the
         # fanciest available items rather than returning nothing.
-        pool = sorted(relevant, key=lambda p: p.get("price", 0), reverse=True)[: max(count * 2, 10)]
+        # Style/occasion gates still run (gender/image already in `relevant`).
+        level_pool = hard_filter(relevant, intent, None)
+        if level_pool:
+            pool = sorted(level_pool, key=lambda p: p.get("price", 0), reverse=True)[: max(count * 2, 10)]
 
     if not pool:
-        return {"selected": [], "band": band, "distribution": dist, "candidates": []}
+        return {
+            "selected": [],
+            "band": band,
+            "distribution": dist,
+            "candidates": [],
+            "validation": {"passed": False, "confidence": 0.0,
+                           "violations": ["empty_outfit"], "level": "low"},
+        }
 
     prices = [p.get("price") or 0 for p in pool]
     price_lo, price_hi = min(prices), max(prices)
@@ -1470,11 +1476,29 @@ def recommend_products(products: list[dict], intent: dict, count: int) -> dict:
     scored.sort(key=lambda p: p["_final"], reverse=True)
 
     selected = _diverse_select(scored, count)
+    # Office must be a complete look: no body garment survived the gates →
+    # ship empty (marketplace layer re-scrapes), never footwear-only.
+    if _office_formal_required(intent) and not any(
+        (p.get("fashion") or {}).get("slot") in ("top", "bottom", "full") for p in selected
+    ):
+        selected = []
     _assign_labels(selected, count)
 
     # Validate the assembled selection as an outfit system
     try:
         validation = frules.validate_outfit(selected, intent)
+        # Defense in depth: an office selection must carry at least one
+        # formal-signal body garment (should be unreachable — every pool
+        # entry point runs the formal gate for office).
+        if _office_formal_required(intent) and selected:
+            body_titles = " ".join(
+                (p.get("title") or "").lower()
+                for p in selected
+                if (p.get("fashion") or {}).get("slot") in ("top", "bottom", "full")
+            )
+            if not any(sig in f" {body_titles} " for sig in _OFFICE_FORMAL_SIGNALS):
+                validation.setdefault("violations", []).append("office_no_formal_signal")
+                validation["passed"] = False
         intent["outfit_validation"] = validation
         if not validation.get("passed") and validation.get("violations"):
             logger.info(f"Outfit validation issues: {validation['violations'][:5]}")

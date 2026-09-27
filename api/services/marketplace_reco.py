@@ -326,19 +326,24 @@ async def search_marketplace_products(
 
     # Coverage guarantee: one flaky scrape draw can deliver zero usable body
     # garments (slot fill has nothing to pull from) → outfit ships without a
-    # top or bottom. One targeted re-scrape of the missing body slot(s),
-    # then re-run the pipeline. Keeps the server contract: work/casual looks
-    # always carry top + bottom when the marketplace has them.
+    # top or bottom. One targeted re-scrape of the missing body slot(s) +
+    # thin-count top-up, then re-run the pipeline. A `full` outfit (dress,
+    # saree, kurta set) covers BOTH top and bottom (RECO-v4.1 contract) —
+    # never re-scrape bottoms for a full-outfit selection.
     def _missing_body_slots(sel: list[dict]) -> list[str]:
         slots = {(p.get("fashion") or {}).get("slot", "") for p in sel}
         missing = []
         if not (slots & {"top", "full"}):
             missing.append("primary")
-        if "bottom" not in slots:
+        if not (slots & {"bottom", "full"}):
             missing.append("bottom")
         return missing
 
     missing = _missing_body_slots(result.get("selected") or [])
+    # Slots complete but the list is thin (e.g. full+shoes = 2 of 6): one
+    # extra primary draw for variety. Bounded to a single retry either way.
+    if not missing and len(result.get("selected") or []) < min(count, 4):
+        missing.append("primary")
     if missing:
         sq_map = dict(slot_queries)
         retry = [(s, sq_map[s]) for s in missing if s in sq_map]
