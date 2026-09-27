@@ -24,6 +24,8 @@ _EVENT_WEIGHTS = {
     "purchase": 3.0,
     "look_feedback": 1.0,
     "dismiss": -1.0,
+    # RECO-v4.4: user asked to explore a selected direction deeper
+    "variation_request": 0.6,
 }
 
 _DECAY = 0.9
@@ -135,6 +137,27 @@ async def _update_wear_prefs(
     await db.flush()
 
 
+async def _update_archetype_weights(db, user, archetype_id: str, signal: float) -> bool:
+    """Archetype-level closed loop (RECO-v4.4): which fashion DIRECTION this
+    user engages with. Stored on users.style_profile.archetype_weights —
+    additive JSON key, no migration. Soft only: feeds the archetype re-rank,
+    never hard gates."""
+    try:
+        profile = dict(user.style_profile) if isinstance(user.style_profile, dict) else {}
+        weights = dict(profile.get("archetype_weights") or {})
+        old = float(weights.get(archetype_id, 0.5) or 0.5)
+        lr = _LEARNING_RATE * min(abs(signal), 2.0) / 2.0
+        target = 1.0 if signal > 0 else 0.0
+        weights[archetype_id] = max(_MIN_WEIGHT, min(_MAX_WEIGHT, old * (1 - lr) + target * lr))
+        profile["archetype_weights"] = weights
+        user.style_profile = profile
+        await db.flush()
+        return True
+    except Exception:
+        logger.debug("archetype weight update failed", exc_info=True)
+        return False
+
+
 @router.post("")
 async def record_event(
     req: EventRequest,
@@ -190,6 +213,20 @@ async def record_event(
                 weight,
             )
             updated_prefs = True
+
+    # Archetype-level affinity (RECO-v4.4): WHICH fashion direction did the
+    # user engage with — stored on users.style_profile.archetype_weights.
+    archetype_id = str(
+        (req.payload or {}).get("archetype_id")
+        or (req.payload or {}).get("archetype") or ""
+    ).strip()
+    if archetype_id and weight != 0 and et in (
+        "look_save", "vton_completed", "purchase", "look_feedback",
+        "dismiss", "look_click", "variation_request",
+    ):
+        updated_prefs = (
+            await _update_archetype_weights(db, user, archetype_id, weight)
+        ) or updated_prefs
 
     await db.flush()
     return {"ok": True, "recorded": True, "event_id": str(event.id), "prefs_updated": updated_prefs}

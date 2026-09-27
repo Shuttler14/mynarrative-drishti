@@ -602,7 +602,7 @@ def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 6) -> li
     rules engine returns nothing.
     """
     try:
-        blueprints = frules.build_outfit_blueprints(intent, n=3)
+        blueprints = frules.build_outfit_blueprints(intent, n=4)
         # Preserve any `why` already attached by marketplace_reco
         prior_why = {
             b.get("id"): b.get("why", "")
@@ -612,12 +612,23 @@ def build_slot_queries(intent: dict, count: int = 6, max_queries: int = 6) -> li
         intent["blueprints"] = [
             {"id": b["id"], "label": b["label"], "variant": b["variant"],
              "archetype": b["archetype"], "dress_code": b["dress_code"],
+             "components": b.get("components", []),
              "why": prior_why.get(b["id"], frules.explain_blueprint(b, intent))}
             for b in blueprints
         ]
         compiled = frules.compile_blueprint_queries(blueprints, intent, max_queries=max_queries)
         if compiled:
-            return _office_formalize([(c["slot"], c["query"]) for c in compiled], intent)
+            formalized = _office_formalize([(c["slot"], c["query"]) for c in compiled], intent)
+            # Map each FINAL query text → blueprint id so products can be
+            # tagged and assembled into archetype-owned looks downstream.
+            # _office_formalize rewrites text ("formal " prefix) and may append
+            # a fallback query — it preserves order, so map positionally.
+            bp_ids = [c["blueprint_id"] for c in compiled]
+            intent["blueprint_query_map"] = {
+                q.lower(): (bp_ids[i] if i < len(bp_ids) else "")
+                for i, (_s, q) in enumerate(formalized)
+            }
+            return formalized
     except Exception as exc:
         logger.warning(f"Blueprint query compile failed, falling back to static slots: {exc}")
 

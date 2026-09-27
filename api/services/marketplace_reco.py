@@ -24,6 +24,7 @@ from api.services.fashion_engine import (
     recommend_products,
 )
 from api.services import fashion_rules as frules
+from api.services import look_assembly
 
 logger = logging.getLogger("drishti.reco.marketplace")
 
@@ -122,6 +123,7 @@ def _format_product_for_reco(product: dict) -> dict:
 
 async def _search_google_shopping_slots(
     slot_queries: list[tuple[str, str]],
+    blueprint_map: dict[str, str] | None = None,
     per_query: int = 20,
 ) -> list[dict]:
     """Run slot-labelled Google Shopping searches in parallel.
@@ -139,8 +141,11 @@ async def _search_google_shopping_slots(
         if isinstance(result, Exception):
             logger.warning(f"Google Shopping slot '{slot}' ('{query}') failed: {result}")
             continue
+        bp_id = (blueprint_map or {}).get(query.lower(), "")
         for p in result:
             p["query_slot"] = slot
+            if bp_id:
+                p["blueprint_id"] = bp_id
             products.append(p)
     return products
 
@@ -191,6 +196,8 @@ async def search_marketplace_products(
     budget_tolerance_pct: float = 20.0,
     prefs: dict | None = None,
     user_id: str | None = None,
+    variation_parent: dict | None = None,
+    exclude_product_ids: list | None = None,
 ) -> dict:
     """Search marketplaces → enrich → price intelligence → scored selection."""
     # Soft preference budget fallback when request didn't send one
@@ -234,24 +241,37 @@ async def search_marketplace_products(
     # Outfit blueprint → slot queries (occasions-aware, with exclusions)
     blueprints: list[dict] = []
     try:
-        blueprints = frules.build_outfit_blueprints(intent, n=3)
+        if variation_parent:
+            # See Variations: clone the parent archetype instead of exploring
+            blueprints = look_assembly.build_variation_blueprints(
+                intent, variation_parent.get("archetype_id", ""), n=4)
+        else:
+            blueprints = frules.build_outfit_blueprints(intent, n=4)
         intent["blueprints"] = [
             {"id": b["id"], "label": b["label"], "variant": b["variant"],
              "archetype": b["archetype"], "dress_code": b["dress_code"],
+             "components": b.get("components", []),
+             "is_variation": bool(b.get("is_variation")),
              "why": frules.explain_blueprint(b, intent)}
             for b in blueprints
         ]
     except Exception as exc:
         logger.warning(f"Blueprint generation failed: {exc}")
 
-    slot_queries = build_slot_queries(intent, count=count)
-    # New users (no user_id) / thin count → simple query set so first results
-    # land fast: one blueprint's primary+bottom+shoes is enough to show a look.
-    if not user_id and count <= 6:
-        slot_queries = slot_queries[:3]
+    if variation_parent:
+        slot_queries = look_assembly.compile_variation_queries(blueprints, intent, max_queries=9)
+        if not user_id and len(slot_queries) > 5:
+            slot_queries = slot_queries[:5]
+    else:
+        slot_queries = build_slot_queries(intent, count=count, max_queries=8)
+        # New users (no user_id) / thin count → simple query set so first results
+        # land fast: one blueprint's primary+bottom+shoes is enough to show a look.
+        if not user_id and count <= 6:
+            slot_queries = slot_queries[:4]
+    blueprint_map: dict[str, str] = intent.get("blueprint_query_map") or {}
     logger.info(f"Slot queries: {slot_queries} (budget mode: {intent.get('budget_mode')})")
 
-    products = await _search_google_shopping_slots(slot_queries)
+    products = await _search_google_shopping_slots(slot_queries, blueprint_map)
 
     if len(products) < max(6, count):
         logger.info(f"Google Shopping under-delivered ({len(products)}), using slot-aware scraper fallback")
@@ -292,18 +312,19 @@ async def search_marketplace_products(
 
         # Merge bottom → shoes → primary so scarce slots claim inventory first
         slot_priority = {"bottom": 0, "shoes": 1, "primary": 2, "accessory": 3}
-        merged: list[tuple[str, list[dict]]] = []
+        merged: list[tuple[str, str, list[dict]]] = []
         for (slot, query), result in zip(pending, fetched):
             if isinstance(result, Exception):
                 logger.warning(f"Scraper fallback '{slot}' ('{query}') failed: {result}")
                 continue
-            merged.append((slot, result))
+            merged.append((slot, query, result))
         merged.sort(key=lambda item: slot_priority.get(item[0], 9))
 
-        for slot, fallback in merged:
+        for slot, query, fallback in merged:
             target = targets.get(slot, 2)
             max_add = max(target, 3) if slot != "primary" else 6
             added = 0
+            bp_id = blueprint_map.get(query.lower(), "")
             for p in fallback:
                 if by_slot.get(slot, 0) >= target and slot != "primary":
                     break
@@ -312,6 +333,8 @@ async def search_marketplace_products(
                     continue
                 seen.add(key)
                 p.setdefault("query_slot", slot)
+                if bp_id:
+                    p["blueprint_id"] = bp_id
                 products.append(p)
                 by_slot[slot] = by_slot.get(slot, 0) + 1
                 added += 1
@@ -321,6 +344,19 @@ async def search_marketplace_products(
 
     for p in products:
         enrich_product(p)
+
+    # Variation history: never re-serve products already shown this session.
+    ex_keys = {
+        (str(x.get("source", "")), str(x.get("product_id", "")))
+        for x in (exclude_product_ids or []) if isinstance(x, dict)
+    }
+    ex_id_strs = {
+        str(x) for x in (exclude_product_ids or []) if not isinstance(x, dict)
+    }
+    if ex_keys or ex_id_strs:
+        products = [p for p in products
+                    if (p.get("source", ""), p.get("product_id")) not in ex_keys
+                    and str(p.get("product_id") or "") not in ex_id_strs]
 
     result = recommend_products(products, intent, count)
 
@@ -357,17 +393,21 @@ async def search_marketplace_products(
             )
             existing = {(p.get("source"), p.get("product_id")) for p in products}
             fresh: list[dict] = []
-            for (slot, _q), res in zip(retry, done):
+            for (slot, q), res in zip(retry, done):
                 if isinstance(res, Exception):
                     logger.warning(f"Coverage retry '{slot}' failed: {res}")
                     continue
+                bp_id = blueprint_map.get(q.lower(), "")
                 added = 0
                 for p in res:
                     key = (p.get("source"), p.get("product_id"))
-                    if key in existing:
+                    if (key in existing or key in ex_keys
+                            or str(p.get("product_id") or "") in ex_id_strs):
                         continue
                     existing.add(key)
                     p.setdefault("query_slot", slot)
+                    if bp_id:
+                        p["blueprint_id"] = bp_id
                     products.append(p)
                     fresh.append(p)
                     added += 1
@@ -389,6 +429,29 @@ async def search_marketplace_products(
     return result
 
 
+def _format_look(look: dict) -> dict:
+    """Assembled look → API contract (keeps legacy `id`/`archetype`/`why`
+    keys used by the impression event, adds products for look-accurate UI)."""
+    out = {
+        "id": look.get("id", ""),
+        "outfit_id": look.get("outfit_id", ""),
+        "archetype_id": look.get("archetype_id", ""),
+        "blueprint_id": look.get("blueprint_id", ""),
+        "variant": look.get("variant", "safe"),
+        "label": look.get("label", ""),
+        "why": look.get("why", ""),
+        "occasion": look.get("occasion", ""),
+        "dress_code": look.get("dress_code", ""),
+        "score": look.get("score", 0.0),
+        "is_variation": look.get("is_variation", False),
+        "variation_index": look.get("variation_index", -1),
+        "signature": look.get("signature", {}),
+    }
+    out["products"] = [_format_product_for_reco(p) for p in look.get("products", [])]
+    out["total_price"] = sum(p.get("price") or 0 for p in out["products"])
+    return out
+
+
 async def get_marketplace_recommendations(
     occasion: str = "",
     style: str = "",
@@ -407,6 +470,9 @@ async def get_marketplace_recommendations(
     budget_tolerance_pct: float = 20.0,
     prefs: dict | None = None,
     user_id: str | None = None,
+    variation_parent: dict | None = None,
+    exclude_product_ids: list | None = None,
+    exclude_titles: list | None = None,
 ) -> dict:
     """Main entry point: recommendations + budget intelligence + ranked brands."""
     from api.services.price_intelligence import (
@@ -431,6 +497,8 @@ async def get_marketplace_recommendations(
         budget_tolerance_pct=budget_tolerance_pct,
         prefs=prefs,
         user_id=user_id,
+        variation_parent=variation_parent,
+        exclude_product_ids=exclude_product_ids,
     )
 
     selected = result.get("selected", [])
@@ -441,7 +509,35 @@ async def get_marketplace_recommendations(
     validation = result.get("validation") or intent.get("outfit_validation") or {}
     blueprints = result.get("blueprints") or intent.get("blueprints") or []
 
-    recommendations = [_format_product_for_reco(p) for p in selected[:count]]
+    # ── Look assembly layer (RECO-v4.4) ────────────────────────────────
+    # Four structurally distinct outfits from the scored pool; products are
+    # unique across looks and duplicate skeletons are dropped (never forced).
+    assembled = look_assembly.assemble_looks(
+        candidates,
+        blueprints,
+        intent,
+        count=4,
+        exclude_product_ids=exclude_product_ids,
+        exclude_titles=exclude_titles,
+        enforce_diversity=not bool(variation_parent),
+    )
+    looks = [_format_look(lk) for lk in assembled]
+
+    if looks:
+        # Flat contract (backward compat) = union of look products in look
+        # order: the legacy hero/round-robin UI then picks distinct heroes.
+        seen_rp: set = set()
+        recommendations = []
+        for lk in looks:
+            for fp in lk["products"]:
+                key = (fp.get("source", ""), fp.get("product_id", ""))
+                if key in seen_rp:
+                    continue
+                seen_rp.add(key)
+                recommendations.append(fp)
+        recommendations = recommendations[:max(count, 12)]
+    else:
+        recommendations = [_format_product_for_reco(p) for p in selected[:count]]
 
     brand_pool = candidates if len(candidates) >= 10 else selected
     ranked_brands = rank_brands(brand_pool, band=band, limit=8)
@@ -451,7 +547,7 @@ async def get_marketplace_recommendations(
         "count": len(recommendations),
         "source": "fashion_engine",
         "platforms_searched": ["google_shopping", "amazon", "myntra", "flipkart"],
-        "looks": blueprints,
+        "looks": looks or blueprints,
         "outfit_validation": {
             "passed": validation.get("passed", True),
             "confidence": validation.get("confidence", 0.5),

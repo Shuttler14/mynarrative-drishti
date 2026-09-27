@@ -112,6 +112,10 @@ class RecommendRequest(BaseModel):
     wear: list[str] = []
     vibe: list[str] = []
     look_categories: list[str] | None = None
+    # RECO-v4.4 — See Variations + shown-history
+    variation_parent: dict | None = None      # {archetype_id, outfit_id?, label?, product_ids[], titles[]}
+    exclude_product_ids: list[str] = []       # products already shown this session
+    exclude_titles: list[str] = []
 
 
 class BrandsRequest(BaseModel):
@@ -166,14 +170,8 @@ def _get_clip_embedding(text: str) -> list[float] | None:
         return None
 
 
-@router.post("/outfits")
-async def recommend_outfits(
-    req: RecommendRequest,
-    authorization: str = Header(None),
-    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Recommend products from ALL marketplaces (Amazon, Myntra, Flipkart) based on user preferences."""
+async def _resolve_context(req, db, authorization, x_shopify_customer_id):
+    """Shared user/DNA/brand resolution for /outfits and /variations."""
     from api.utils.identity import load_style_prefs, normalize_wear_weights, resolve_user
 
     user = await resolve_user(
@@ -184,11 +182,15 @@ async def recommend_outfits(
     )
     user_id = str(user.id) if user else None
 
-    # Load contextual Fashion DNA prefs (soft preferences — hard gates untouched)
     prefs: dict | None = None
     if user_id:
         prefs = await load_style_prefs(db, user_id, req.occasion or "")
-    # Request-level wear/vibe override DB for this turn (wizard chips)
+    # Archetype-level Fashion DNA (RECO-v4.4) — soft re-rank signal
+    if user and isinstance(user.style_profile, dict):
+        aw = user.style_profile.get("archetype_weights")
+        if aw:
+            prefs = dict(prefs or {})
+            prefs["archetype_weights"] = dict(aw)
     if req.wear:
         prefs = dict(prefs or {})
         prefs["wear_weights"] = normalize_wear_weights(req.wear)
@@ -203,10 +205,23 @@ async def recommend_outfits(
     if not style and req.styles:
         style = req.styles[0] or ""
 
-    # Merge DB style_profile brands if request didn't send any
     brands = list(req.brands or [])
     if not brands and user and isinstance(user.style_profile, dict):
         brands = list(user.style_profile.get("brands") or [])
+
+    return user, user_id, prefs, style, brands
+
+
+@router.post("/outfits")
+async def recommend_outfits(
+    req: RecommendRequest,
+    authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recommend products from ALL marketplaces (Amazon, Myntra, Flipkart) based on user preferences."""
+    user, user_id, prefs, style, brands = await _resolve_context(
+        req, db, authorization, x_shopify_customer_id)
 
     # ── PRIMARY: Search marketplaces directly ──
     try:
@@ -230,6 +245,9 @@ async def recommend_outfits(
             budget_tolerance_pct=req.budget_tolerance_pct,
             prefs=prefs,
             user_id=user_id,
+            variation_parent=req.variation_parent,
+            exclude_product_ids=req.exclude_product_ids,
+            exclude_titles=req.exclude_titles,
         )
         
         if result.get("recommendations"):
@@ -253,8 +271,10 @@ async def recommend_outfits(
                         uid = None
                     if uid is not None:
                         looks_meta = [
-                            {"id": lk.get("id"), "archetype": lk.get("archetype"), "why": lk.get("why")}
-                            for lk in (result.get("looks") or [])[:3]
+                            {"id": lk.get("id"), "outfit_id": lk.get("outfit_id"),
+                             "archetype": lk.get("archetype_id") or lk.get("archetype"),
+                             "why": lk.get("why")}
+                            for lk in (result.get("looks") or [])[:4]
                         ]
                         db.add(UserEvent(
                             user_id=uid,
@@ -387,7 +407,20 @@ async def recommend_outfits(
                     assembled = rec.get("selected") or []
                     validation = rec.get("validation") or {}
                 except Exception:
-                    assembled, validation = [], {}
+                    rec, assembled, validation = {}, [], {}
+                # Same look-assembly layer as the primary path (RECO-v4.4)
+                looks_b: list = []
+                try:
+                    from api.services.look_assembly import assemble_looks
+                    from api.services.marketplace_reco import _format_look
+                    looks_b = [
+                        _format_look(lk) for lk in assemble_looks(
+                            rec.get("candidates") or assembled,
+                            intent.get("blueprints") or [],
+                            intent, count=4)
+                    ]
+                except Exception:
+                    logger.debug("vector-path look assembly failed", exc_info=True)
                 if assembled:
                     for p in assembled:
                         recommendations.append({
@@ -409,7 +442,7 @@ async def recommend_outfits(
                         return {"recommendations": recommendations, "count": len(recommendations),
                                 "source": "vector_search", "reco_version": RECO_VERSION,
                                 "outfit_validation": validation,
-                                "looks": (intent.get("blueprints") or [])[:3]}
+                                "looks": looks_b or (intent.get("blueprints") or [])[:3]}
                 if not recommendations:
                     for p in filtered:
                         recommendations.append({
@@ -429,13 +462,88 @@ async def recommend_outfits(
                             break
 
                 if recommendations:
-                    return {"recommendations": recommendations, "count": len(recommendations), "source": "vector_search", "reco_version": RECO_VERSION}
+                    return {"recommendations": recommendations, "count": len(recommendations),
+                            "source": "vector_search", "reco_version": RECO_VERSION,
+                            "looks": looks_b or (intent.get("blueprints") or [])[:3]}
 
     except Exception as e:
         logger.error(f"Qdrant fallback failed: {e}")
 
     # ── FINAL FALLBACK: Empty ──
     return {"recommendations": [], "count": 0, "source": "none", "reco_version": RECO_VERSION}
+
+
+@router.post("/variations")
+async def recommend_variations(
+    req: RecommendRequest,
+    authorization: str = Header(None),
+    x_shopify_customer_id: str | None = Header(None, alias="X-Shopify-Customer-Id"),
+    db: AsyncSession = Depends(get_db),
+):
+    """See Variations (RECO-v4.4): controlled variations of ONE selected outfit.
+
+    The parent look is the anchor — occasion/dress code/archetype/silhouette
+    stay fixed; colour, fabric, print, footwear, brand, price and the actual
+    products rotate. Same-archetype looks skip the cross-look structural
+    block (they MUST share the skeleton) but stay unique via product
+    uniqueness + title dedupe + session shown-history exclusions.
+    """
+    parent = req.variation_parent or {}
+    if not parent.get("archetype_id"):
+        return {"recommendations": [], "count": 0, "looks": [],
+                "source": "none", "reco_version": RECO_VERSION,
+                "error": "variation_parent.archetype_id required"}
+
+    user, user_id, prefs, style, brands = await _resolve_context(
+        req, db, authorization, x_shopify_customer_id)
+
+    # Parent products themselves must never reappear as "variations".
+    exclude_ids = list(dict.fromkeys(
+        list(req.exclude_product_ids or [])
+        + [str(x) for x in (parent.get("product_ids") or [])]
+    ))
+    exclude_titles = list(dict.fromkeys(
+        list(req.exclude_titles or [])
+        + [str(t) for t in (parent.get("titles") or []) if t]
+    ))
+
+    try:
+        from api.services.marketplace_reco import get_marketplace_recommendations
+
+        result = await get_marketplace_recommendations(
+            occasion=req.occasion or "",
+            style=style,
+            gender=req.gender or "",
+            body_profile=req.body_profile or {},
+            weather=req.weather or {},
+            price_segment=req.price_segment or "",
+            price_range=req.price_range or "",
+            city=req.city or "",
+            brands=brands or [],
+            count=req.count or 12,
+            budget_level=req.budget_level or "",
+            budget_min=req.budget_min,
+            budget_max=req.budget_max,
+            budget_point=req.budget_point,
+            budget_tolerance_pct=req.budget_tolerance_pct,
+            prefs=prefs,
+            user_id=user_id,
+            variation_parent=parent,
+            exclude_product_ids=exclude_ids,
+            exclude_titles=exclude_titles,
+        )
+        if result.get("recommendations"):
+            recs = await _make_images_accessible(result["recommendations"])
+            result["outfits"] = recs
+            result["products"] = recs
+            result["reco_version"] = RECO_VERSION
+            result["parent_outfit_id"] = parent.get("outfit_id", "")
+            return result
+    except Exception as e:
+        logger.error(f"Variations search failed: {e}")
+
+    return {"recommendations": [], "count": 0, "looks": [],
+            "source": "none", "reco_version": RECO_VERSION}
 
 
 @router.get("/version")

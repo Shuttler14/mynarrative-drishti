@@ -4775,6 +4775,12 @@
         "slots": [
           "primary"
         ]
+      },
+      {
+        "blueprint": 3,
+        "slots": [
+          "primary"
+        ]
       }
     ]
   },

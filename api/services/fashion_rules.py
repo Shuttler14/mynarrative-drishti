@@ -147,8 +147,10 @@ def get_archetypes(gender: str, occasion: str, count: int = 3, intent: dict | No
     pool = sorted(pool, key=lambda a: order.get(a.get("variant", "safe"), 0))
 
     wear = {}
+    arch_w = {}
     if intent:
         wear = intent.get("wear_weights") or (intent.get("user_prefs") or {}).get("wear_weights") or {}
+        arch_w = intent.get("archetype_weights") or (intent.get("user_prefs") or {}).get("archetype_weights") or {}
 
     # Office/interview + strong western → formal western only (user requirement)
     if wear and occasion in ("work", "interview", "office"):
@@ -159,8 +161,8 @@ def get_archetypes(gender: str, occasion: str, count: int = 3, intent: dict | No
             if western_pool:
                 pool = western_pool
 
-    if wear and len(pool) >= 2:
-        pool = _re_rank_archetypes_by_affinity(pool, wear, count)
+    if (wear or arch_w) and len(pool) >= 2:
+        pool = _re_rank_archetypes_by_affinity(pool, wear, count, arch_w)
 
     return pool[:count] if count else pool
 
@@ -198,11 +200,28 @@ def _archetype_culture_affinity(arch: dict, wear: dict) -> float:
     return sum(scores) / len(scores)
 
 
-def _re_rank_archetypes_by_affinity(pool: list[dict], wear: dict, count: int) -> list[dict]:
-    """2 preferred + 1 discovery: sort by affinity, keep least-preferred as last slot."""
+def _re_rank_archetypes_by_affinity(
+    pool: list[dict],
+    wear: dict,
+    count: int,
+    archetype_weights: dict | None = None,
+) -> list[dict]:
+    """2 preferred + 1 discovery: sort by affinity, keep least-preferred as last slot.
+
+    Affinity = culture fit (existing) + 0.35 × learned archetype weight
+    (RECO-v4.4 closed loop). No learned weights → identical to legacy order.
+    """
     if not pool:
         return pool
-    scored = [( _archetype_culture_affinity(a, wear), i, a) for i, a in enumerate(pool)]
+    aw = archetype_weights or {}
+
+    def _combined(a: dict) -> float:
+        base = _archetype_culture_affinity(a, wear)
+        if aw:
+            base += 0.35 * float(aw.get(a.get("id", ""), 0) or 0)
+        return base
+
+    scored = [(_combined(a), i, a) for i, a in enumerate(pool)]
     # Prefer higher affinity; stable by original index
     scored.sort(key=lambda t: (-t[0], t[1]))
     ordered = [a for _, _, a in scored]
