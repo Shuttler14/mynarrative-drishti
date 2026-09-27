@@ -178,6 +178,19 @@ def test_office_slot_queries_always_ask_for_formal():
     assert fe._office_formalize(qs, casual) == qs
 
 
+def test_office_indian_draws_get_a_western_top_query():
+    """Indian/indo-western blueprints compile kurta-only primaries; bare-kurta
+    titles never carry a formal signal → starved tops. Every office draw needs
+    at least one shirt/blazer query as a gate-passing top source."""
+    indian = fe.build_intent(occasion="work", gender="female",
+                             user_prefs={"wear_weights": {"indian": 1.0}})
+    queries = fe.build_slot_queries(indian, count=6)
+    primaries = [q.lower() for s, q in queries if s == "primary"]
+    assert primaries, queries
+    assert any(("shirt" in q or "blazer" in q) for q in primaries), (
+        "no western-formal top query in office draw:", primaries)
+
+
 def test_office_formalize_is_a_noop_when_formal_already_present():
     qs = [("primary", "women formal shirt office wear")]
     office = fe.build_intent(occasion="work", gender="female")

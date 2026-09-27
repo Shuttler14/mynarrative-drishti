@@ -564,12 +564,17 @@ _QUERY_VARIATIONS: dict[str, list[str]] = {
 import random as _random
 
 def _office_formalize(queries: list[tuple[str, str]], intent: dict) -> list[tuple[str, str]]:
-    """Office draws must ASK for formal-titled results on every wear mode.
+    """Steer office DRAW QUERIES toward gate-passing inventory (gates unchanged).
 
-    Blueprint queries like "women blue straight kurta cotton office wear"
-    return titles with no formal signal ("office wear" rarely survives into
-    the product title), which the office gate then rejects → starved pools.
-    Gate wording is unchanged; only the search query is steered. (RECO-v4.3)
+    1. "formal" wording: blueprint queries like "women blue straight kurta
+       cotton office wear" return titles with no formal signal ("office wear"
+       rarely survives into the product title) → gate rejects → starved pools.
+    2. Western-formal top fallback: indian/indo-western blueprints compile
+       kurta-only primaries; bare-kurta titles never carry a formal signal, so
+       those draws starved for tops. One shirt/blazer query guarantees a
+       gate-passing top source (formal ethnic kurtas still enter via their
+       own queries when titled accordingly).
+    (RECO-v4.3)
     """
     if not _office_formal_required(intent):
         return queries
@@ -578,6 +583,14 @@ def _office_formalize(queries: list[tuple[str, str]], intent: dict) -> list[tupl
         if "formal" not in q.lower():
             q = f"formal {q}"
         out.append((slot, q))
+    primaries = [q.lower() for s, q in out if s == "primary"]
+    western_top_words = ("shirt", "blazer", "waistcoat", "tunic", "kurti top")
+    if not any(any(w in q for w in western_top_words) for q in primaries):
+        gender = intent.get("gender", "")
+        gterm = "women" if gender in ("female", "woman", "girl", "f") else \
+                "men" if gender in ("male", "man", "m") else ""
+        q = f"{gterm} formal shirt blazer office wear India -bridal -wedding -lehenga -sequin -party".strip()
+        out.append(("primary", q))
     return out
 
 
