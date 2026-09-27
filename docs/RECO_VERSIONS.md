@@ -28,7 +28,7 @@ Every release: (1) bump `RECO_VERSION` in `api/services/reco_version.py`,
 | **RECO-v4.0** | 2026-09-20 | Fashion DNA + Intelligence | `fashion_engine.py` intent system (`build_intent`, scoring, `hard_filter`), `fashion_rules_v1.json` outfit grammar, price intelligence, weather/geolocation, Fashion DNA soft prefs, pinned VTON | `99c20ec` |
 | **RECO-v4.1** | 2026-09-24 | Office Diversity + Slot Fixes | Office outfit diversification (no more shirts-only), skip bottom slot when full-outfit (saree/dress/kurta set) selected | `2c802f5`, `e481b59` |
 | **RECO-v4.2** | 2026-09-25 | Formal-Only Gate + Stability | Office/western formal-only gate (`_office_western_strict` + `_office_formal_required` + `_OFFICE_FORMAL_SIGNALS`), scraper 6s/source + 10/15s deadlines, office-office rescue, **first benchmarked release (this file + `bench/`)** | `9832a87` |
-| **RECO-v4.3** | 2026-09-27 | Slot Coverage + Image Gate | `_fill_missing_slots` (gate-starved top/bottom top-up, 2-pass formal→relaxed), slot-coverage re-scrape retry (no more footwear-only draws), imageless-product gate in `recommend_products`, office golden-contract tests + work-outfit 24-combo variation matrix | `d217d34` |
+| **RECO-v4.3** | 2026-09-27 | Slot Coverage + Image Gate | `_fill_missing_slots` (gate-starved top/bottom top-up, formal-only — office never relaxes), slot-coverage re-scrape retry (slot + thin-count), imageless-product gate in `recommend_products`, office formal enforced through fill/rescue/degrade (empty beats ethnic-casual; footwear-only office draws ship empty), office golden-contract tests + work-outfit 24-combo variation matrix | `d217d34`, `6dd9fae` |
 
 \* typo guard: v3.0 commits are `92f9397` (SerpApi) and `ece193c` (16s reco + pricing).
 
