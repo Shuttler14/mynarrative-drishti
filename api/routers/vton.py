@@ -34,6 +34,8 @@ def _humanize_vton_error(detail: str | None) -> str | None:
         return "We couldn't find a person in that photo. Try a clearer full-body or upper-body shot."
     if "rate limit" in low or "429" in d:
         return "Try-on is busy right now. Please wait a moment and tap retry."
+    if "402" in d or "insufficient credit" in low:
+        return "Try-on is temporarily unavailable. Please try again in a moment."
     if "timed out" in low or "timeout" in low:
         return "Try-on took too long. Please retry."
     if "cannot fetch image" in low or "failed to download" in low:
