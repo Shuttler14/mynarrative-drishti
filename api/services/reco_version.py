@@ -8,7 +8,7 @@ Every bump: update RECO_VERSIONS.md, run `python bench/run_bench.py gates`,
 save the scorecard under the new version.
 """
 
-RECO_VERSION = "4.3"
+RECO_VERSION = "4.4"
 RECO_NAME = "Slot Coverage + Image Gate"
 RECO_RELEASED = "2026-09-27"
 
