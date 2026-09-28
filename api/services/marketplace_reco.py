@@ -488,13 +488,22 @@ async def search_marketplace_products(
     # VALID candidates (live: indian office → 20 raw ethnic tops → 3 valid →
     # 1 look). Before accepting the thin pool, spend ONE bounded round on the
     # queries the new-user budget cut (shirt/blazer families never fetched).
+    # Starvation is per-SLOT, not just per-pool: a rich shoes-heavy pool
+    # (live: indian+band → 16 shoes / 2 bottoms / 2 TOPS, candidates=20)
+    # clears the total bar while blueprints 3-4 find no primary to assemble
+    # — the unfetched saree/shirt queries are exactly what they need.
     valid_n = len(result.get("candidates") or result.get("selected") or [])
-    if valid_n < max(6, count):
+    primary_n = sum(
+        1 for p in (result.get("candidates") or result.get("selected") or [])
+        if (p.get("fashion") or {}).get("slot") in ("top", "full"))
+    primary_want = min(4, len(intent.get("blueprints") or []) or 4)
+    if valid_n < max(6, count) or primary_n < primary_want:
         unused = [(s, q) for s, q in all_slot_queries
                   if q not in fetched_queries][:4]
         if unused:
             logger.info(
-                f"Valid pool thin ({valid_n} < {max(6, count)}) — top-up "
+                f"Pool thin (valid={valid_n}/{max(6, count)}, "
+                f"primary={primary_n}/{primary_want}) — top-up "
                 f"round over {len(unused)} unfetched blueprint queries")
             search_stats["topup_queries"] = (
                 search_stats.get("topup_queries", 0) + len(unused))

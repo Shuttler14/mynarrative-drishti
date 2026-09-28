@@ -252,17 +252,50 @@ def test_gate_aware_topup_fetches_cut_queries(monkeypatch):
     assert "topup_ms" in res["stage_ms"]
 
 
+def test_topup_fires_on_primary_starvation(monkeypatch):
+    """A pool that is RICH in total but shoes-heavy clears the total-valid
+    bar while blueprints find no primary to assemble (live: indian+band →
+    candidates=20 with 16 shoes / 2 tops → 2 of 4 looks). The top-up must
+    trigger on primary starvation too, not just total thinness."""
+    calls: list[str] = []
+
+    async def fake_slots(slot_queries, blueprint_map=None, per_query=20,
+                         stats=None):
+        out = [_p(f"t{i}", f"Women Formal Shirt {i} Office", "top", "top",
+                  950 + i * 10, score=0.8) for i in range(2)]
+        out += [_p(f"b{i}", f"Women Formal Cigarette Trousers {i}", "bottom",
+                   "trousers", 1100 + i * 10, score=0.75) for i in range(2)]
+        out += [_p(f"h{i}", f"Women Block Heels {i}", "shoes", "heels",
+                   1300 + i * 10, score=0.7) for i in range(4)]
+        return out  # 8 valid candidates, but only 2 tops
+
+    async def fake_fallback(query, stats=None):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(mkt, "_search_google_shopping_slots", fake_slots)
+    monkeypatch.setattr(mkt, "_scraper_fallback", fake_fallback)
+
+    res = _run(mkt.search_marketplace_products(
+        occasion="work", gender="female", count=6))
+
+    stats = res["search_stats"]
+    assert len(res["candidates"] or []) >= 6, "pool is rich in total"
+    assert stats.get("topup_queries", 0) >= 1, stats  # fired on starvation
+    assert calls, "unfetched blueprint queries were fetched"
+
+
 def test_no_topup_when_valid_pool_is_rich(monkeypatch):
     """Happy path stays untouched: rich valid pool → zero extra rounds."""
     fallback_calls = []
 
     async def fake_slots(slot_queries, blueprint_map=None, per_query=20,
                          stats=None):
-        # 8 gender-valid, image-bearing products (incl. shoes) → candidates
-        # ≥ 6 and every look slot covered → zero extra rounds anywhere
+        # ≥4 tops (primary-starvation threshold), ≥6 valid, every look slot
+        # covered → zero extra rounds anywhere
         out = []
         for i, (sc, bc) in enumerate((("white", "black"), ("blue", "navy"),
-                                      ("grey", "beige"))):
+                                      ("grey", "beige"), ("pink", "olive"))):
             out.append(_p(f"t{i}", f"Women Formal Shirt {i} Office {sc}", "top",
                           "top", 900 + i * 50, color=sc, score=0.8))
             out.append(_p(f"b{i}", f"Women Formal Cigarette Trousers {i} {bc}",
