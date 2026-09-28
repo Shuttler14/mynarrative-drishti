@@ -8,8 +8,8 @@ Every bump: update RECO_VERSIONS.md, run `python bench/run_bench.py gates`,
 save the scorecard under the new version.
 """
 
-RECO_VERSION = "4.4"
-RECO_NAME = "Look Assembly + See Variations"
+RECO_VERSION = "4.5"
+RECO_NAME = "Coverage Interleave + Look Completeness + Diagnostics"
 RECO_RELEASED = "2026-09-28"
 
 # Companion pipeline versions (reported alongside, versioned independently)
