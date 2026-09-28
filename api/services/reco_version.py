@@ -9,12 +9,12 @@ save the scorecard under the new version.
 """
 
 RECO_VERSION = "4.4"
-RECO_NAME = "Slot Coverage + Image Gate"
-RECO_RELEASED = "2026-09-27"
+RECO_NAME = "Look Assembly + See Variations"
+RECO_RELEASED = "2026-09-28"
 
 # Companion pipeline versions (reported alongside, versioned independently)
 EXTRACT_VERSION = "b5"      # garment band-crop (api/services/garment_extract.py)
-FASHION_RULES_VERSION = "v1"  # api/data/fashion_rules_v1.json
+FASHION_RULES_VERSION = "v1.1"  # api/data/fashion_rules_v1.json
 
 
 def version_info() -> dict:

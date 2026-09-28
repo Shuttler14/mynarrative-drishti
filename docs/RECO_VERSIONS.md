@@ -43,6 +43,7 @@ Every release: (1) bump `RECO_VERSION` in `api/services/reco_version.py`,
 | EXTRACT-b4 | 2026-09-27 | Segment bottom-pick | Single-boundary scan inverted on mid-framed shots (hem = first change inside pants → shoes shipped); segment-based pick, coordinate fix, full-framing fallback | `d0238d3` |
 | **EXTRACT-b5** | 2026-09-27 | Head-aware bottom pick | b4 picked head+kurta as "bottom" on waist-boundary-less listing shots (pale kurta, bare legs); head zone now ineligible, headless frames keep upper-half rule, no candidate → keep whole silhouette | `d217d34` |
 | FASHION_RULES-v1 | 2026-09-20 | Outfit grammar v1 | Hard exclusions, occasion gates, garment never_with, dress codes | `99c20ec`, `9832a87` |
+| **FASHION_RULES-v1.1** | 2026-09-28 | 4-blueprint plan + light components | `query_compiler.blueprint_plan` gains `blueprint: 3` (4th slot query per archetype), light blueprints carry `components` (assembly fills them per slot) — companion to RECO-v4.4 look assembly | `f6e132a` |
 
 ## How each version was judged
 
