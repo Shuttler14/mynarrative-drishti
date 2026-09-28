@@ -14,15 +14,15 @@
    "category": "top",
    "notes": "hoodie on model — extraction must drop the model's pants (the original pant-bleed bug case)",
    "labels": {
-    "garment_fidelity": null,
-    "leakage_pct": null,
-    "identity_ok": null,
-    "artifacts": null,
-    "labelled_by": null,
-    "body_preservation": null,
-    "boundary_quality": null,
-    "overall": null,
-    "labelled_at": null
+    "garment_fidelity": "55",
+    "leakage_pct": "5",
+    "identity_ok": "ok",
+    "artifacts": "1",
+    "labelled_by": "opencode-v4.5",
+    "body_preservation": "95",
+    "boundary_quality": "88",
+    "overall": "55",
+    "labelled_at": "2026-09-28T10:29:33+00:00"
    }
   },
   {
@@ -37,15 +37,15 @@
    "category": "top",
    "notes": "Myntra full model shot (b3 band crop should keep top only)",
    "labels": {
-    "garment_fidelity": null,
-    "leakage_pct": null,
-    "identity_ok": null,
-    "artifacts": null,
-    "labelled_by": null,
-    "body_preservation": null,
-    "boundary_quality": null,
-    "overall": null,
-    "labelled_at": null
+    "garment_fidelity": "76",
+    "leakage_pct": "15",
+    "identity_ok": "ok",
+    "artifacts": "3",
+    "labelled_by": "opencode-v4.5",
+    "body_preservation": "86",
+    "boundary_quality": "66",
+    "overall": "64",
+    "labelled_at": "2026-09-28T22:21:30+00:00"
    }
   },
   {
@@ -60,15 +60,15 @@
    "category": "top",
    "notes": "second Myntra shot — band boundary different framing",
    "labels": {
-    "garment_fidelity": null,
-    "leakage_pct": null,
-    "identity_ok": null,
-    "artifacts": null,
-    "labelled_by": null,
-    "body_preservation": null,
-    "boundary_quality": null,
-    "overall": null,
-    "labelled_at": null
+    "garment_fidelity": "68",
+    "leakage_pct": "10",
+    "identity_ok": "ok",
+    "artifacts": "5",
+    "labelled_by": "opencode-v4.5",
+    "body_preservation": "74",
+    "boundary_quality": "66",
+    "overall": "40",
+    "labelled_at": "2026-09-28T22:21:30+00:00"
    }
   },
   {
@@ -83,15 +83,15 @@
    "category": "top",
    "notes": "local person (data URI) + local hoodie product — no-CDN dependency case",
    "labels": {
-    "garment_fidelity": null,
-    "leakage_pct": null,
-    "identity_ok": null,
-    "artifacts": null,
-    "labelled_by": null,
-    "body_preservation": null,
-    "boundary_quality": null,
-    "overall": null,
-    "labelled_at": null
+    "garment_fidelity": "70",
+    "leakage_pct": "5",
+    "identity_ok": "ok",
+    "artifacts": "3",
+    "labelled_by": "opencode-v4.5",
+    "body_preservation": "88",
+    "boundary_quality": "84",
+    "overall": "72",
+    "labelled_at": "2026-09-28T22:21:30+00:00"
    }
   },
   {
@@ -106,15 +106,15 @@
    "category": "top",
    "notes": "second local hoodie — variation in product photography",
    "labels": {
-    "garment_fidelity": null,
-    "leakage_pct": null,
-    "identity_ok": null,
-    "artifacts": null,
-    "labelled_by": null,
-    "body_preservation": null,
-    "boundary_quality": null,
-    "overall": null,
-    "labelled_at": null
+    "garment_fidelity": "8",
+    "leakage_pct": "3",
+    "identity_ok": "ok",
+    "artifacts": "3",
+    "labelled_by": "opencode-v4.5",
+    "body_preservation": "93",
+    "boundary_quality": "82",
+    "overall": "12",
+    "labelled_at": "2026-09-28T22:21:30+00:00"
    }
   }
  ]

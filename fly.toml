@@ -18,6 +18,9 @@ primary = "ams"
   VTOE_GPU_URL = "https://vton.mynarrative.in"
   AWS_REGION = "eu-north-1"
   S3_BUCKET = "mynarrative-dtf-bucket"
+  # All 4 slot queries fan out together (SerpApi handles the burst —
+  # concurrent probe: ~350ms/query vs a serialized tail wave at 3)
+  SERPAPI_CONCURRENCY = "4"
 
 [http_service]
   internal_port = 8000
