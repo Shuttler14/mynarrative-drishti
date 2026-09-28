@@ -163,12 +163,18 @@ def _assemble_one(
     exclude_titles: list[str],
     avoid: tuple = (),
     own_bp_id: str = "",
+    strict_primary: bool = False,
 ) -> dict | None:
     """Build the best-scoring assignment for one blueprint.
 
     avoid: tuples like ("body", cat)/("lower", cat) already used by accepted
     looks — soft penalty so this look reaches for a different skeleton, while
     remaining gate-valid (relevance always outranks the penalty).
+
+    strict_primary (variations): when the pool holds no tier0/tier1 product
+    for the primary slot, DROP instead of borrowing a foreign garment — a
+    "Kurta + Palazzo" variation must never ship as a blazer (initial
+    discovery keeps the tier2 rescue because a top beats an empty look).
     """
     components = bp.get("components") or []
     needs = _needs_from_components(components)
@@ -207,22 +213,27 @@ def _assemble_one(
         if not eligible:
             continue
 
+        # Garment-level slot match (Enhancement 8) as STRICT TIERS, not a
+        # bonus: a bonus can be outrun by a raw-score gap (live: office
+        # blazers at _final 0.9 beat a kurta at 0.6+0.25 for WF-05's primary).
+        # tier 0 = the component's true category (detect[0])
+        # tier 1 = shared vocabulary (western_shirt also claims 'tshirt')
+        # tier 2 = fallback — used only when the pool has nothing better
+        def tier(p: dict) -> int:
+            det = detect_by_need.get(need) or []
+            if not det:
+                return 1
+            cat = _cat_of(p)
+            if cat == det[0]:
+                return 0
+            return 1 if cat in det else 2
+
         def rank(p: dict) -> float:
             s = _score_of(p)
             if own_bp_id and p.get("blueprint_id") == own_bp_id:
                 s += 0.06
-            # Garment-level slot match (Enhancement 8): a blueprint asking for
-            # a saree must not settle for whatever full-garment scores highest.
-            # Exact category (detect[0]) ≫ shared-vocabulary category — a
-            # tee must not win FC-02's "casual shirt" slot by 0.01.
-            det = detect_by_need.get(need) or []
-            if det:
-                if _cat_of(p) == det[0]:
-                    s += 0.25
-                elif _cat_of(p) in det:
-                    s += 0.12
             # Title names the archetype's exact garment ("Women Chinos Khaki"
-            # for a chinos component) → non-binding tie-break.
+            # for a chinos component) → non-binding tie-break within a tier.
             if garment_words and garment_words <= _title_key(p):
                 s += 0.10
             # Soft structural avoid (diversity): heavy enough to prefer a
@@ -236,12 +247,14 @@ def _assemble_one(
         # Existing outfit pairing gate (saree × sneakers etc.) — first
         # candidate that pairs with what's already assigned wins.
         chosen = None
-        for cand in sorted(eligible, key=rank, reverse=True):
+        for cand in sorted(eligible, key=lambda x: (tier(x), -rank(x))):
             if frules.outfit_pairing_ok(cand, list(assign.values())):
                 chosen = cand
                 break
         if chosen is None:
             continue
+        if need == "primary" and strict_primary and tier(chosen) == 2:
+            return None  # direction contract: no foreign-garment rescue
         pick = chosen
         assign[need] = pick
         used.add(_pid(pick))
@@ -331,11 +344,13 @@ def assemble_looks(
 
     assembled: list[dict] = []
     used: set = set()
+    strict = not enforce_diversity  # variations: archetype is the contract
     for bp in blueprints[:count]:
         look = _assemble_one(
             bp, pool, used, intent,
             exclude_ids=exclude_ids, exclude_titles=ex_titles,
             own_bp_id=bp.get("id", ""),
+            strict_primary=strict,
         )
         if look:
             assembled.append(look)

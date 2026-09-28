@@ -371,3 +371,53 @@ def test_reco_endpoint_returns_assembled_looks(monkeypatch):
         exclude_product_ids=["shirt0"]))
     served2 = {p["product_id"] for lk in resp2["looks"] for p in lk["products"]}
     assert "shirt0" not in served2
+
+
+def test_blueprint_garment_beats_higher_scored_fallback():
+    """Live regression: office blazers at _final 0.9 must not win WF-05's
+    kurta primary — the component's true category is a tier, not a bonus,
+    and variation clones never borrow a foreign garment."""
+    intent = build_intent(occasion="work", gender="female",
+                          user_prefs={"wear_weights": {"indian": 0.9,
+                                                        "western": 0.1}})
+    clones = la.build_variation_blueprints(intent, "WF-05", n=2)
+
+    def _pool(kurtas):
+        return [
+            _p("bl0", "Formal Smart Casual Blazer for Women", "top",
+               "outerwear", 1500, score=0.95),
+            *[_p(f"k{i}", f"Women Rayon Straight Kurti {c}", "top", "kurta",
+                 900, culture="indian", score=0.55)
+              for i, c in enumerate(kurtas)],
+            _p("pl0", "Women Wide Leg Formal Palazzo", "bottom", "trousers",
+               800, score=0.70),
+            _p("pl1", "Women Palazzo Pants Black", "bottom", "trousers",
+               750, score=0.69),
+            _p("sh0", "Women Block Heel Sandals", "shoes", "heels", 1300,
+               score=0.75),
+            _p("sh1", "Women Square Toe Heel Pump", "shoes", "heels", 1400,
+               score=0.74),
+        ]
+
+    # (a) two kurtas → both clones wear kurtas, never the 0.95 blazer
+    looks = la.assemble_looks(_pool(["Navy", "Teal"]), clones, intent,
+                              count=2, enforce_diversity=False)
+    assert len(looks) == 2, [lk["products"][0]["title"] for lk in looks]
+    for lk in looks:
+        assert lk["products"][0]["fashion"]["category"] == "kurta", (
+            lk["label"], lk["products"][0]["title"])
+
+    # (b) one kurta → clone0 wears it, clone1 is DROPPED (no mislabelled
+    #     blazer standing in as "Kurta + Palazzo")
+    clones2 = la.build_variation_blueprints(intent, "WF-05", n=2)
+    looks2 = la.assemble_looks(_pool(["Navy"]), clones2, intent,
+                               count=2, enforce_diversity=False)
+    assert len(looks2) == 1, [lk["products"][0]["title"] for lk in looks2]
+    assert looks2[0]["products"][0]["fashion"]["category"] == "kurta"
+
+    # (c) initial discovery KEEPS the top-rescue (a top beats an empty look)
+    clones3 = la.build_variation_blueprints(intent, "WF-05", n=1)
+    looks3 = la.assemble_looks(_pool([]), clones3, intent,
+                               count=1, enforce_diversity=True)
+    assert len(looks3) == 1
+    assert looks3[0]["products"][0]["fashion"]["category"] == "outerwear"
