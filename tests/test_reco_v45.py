@@ -622,6 +622,50 @@ def test_h_client_error_does_not_retry(monkeypatch):
     assert stats.get("retries", 0) == 0
 
 
+def test_h_google_query_strips_exclusions(monkeypatch):
+    """Google Shopping actively MATCHES `-excluded` tokens — live probe:
+    0/20 usable results with exclusions vs 18/20 without ("blue formal
+    shirt" → sequin lehengas). SerpApi gets the query WITHOUT them; the
+    occasion gates reject bad inventory downstream anyway. Cache keys off
+    the stripped text so variants share one quota-efficient fetch."""
+    captured: list[str] = []
+    import types
+    monkeypatch.setattr(ps, "SERPAPI_KEY", "test-key")
+    monkeypatch.setattr(ps, "_cache", {})
+    monkeypatch.setattr(ps, "_serpapi_sem", None)
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None):
+            captured.append((params or {}).get("q", ""))
+            await asyncio.sleep(0.005)
+            return _FakeResp(200, {"shopping_results": [{
+                "title": "Women Formal Shirt", "price": "₹999",
+                "extracted_price": 999, "link": "https://shop.example/p1",
+                "source": "example", "rating": 4.0, "reviews": 3,
+                "thumbnail": "", "rich_thumbnail": ""}]})
+
+    monkeypatch.setattr(ps, "httpx", types.SimpleNamespace(AsyncClient=FakeClient))
+
+    q = ("women blue formal shirt office wear India "
+         "-bridal -wedding -lehenga -sequin -party")
+    _run(ps.search_google_shopping(q, stats={}))
+    assert captured == ["women blue formal shirt office wear India"], captured
+    # a variant differing only in exclusions hits the same cached fetch
+    stats2: dict = {}
+    _run(ps.search_google_shopping("women blue formal shirt office wear India",
+                                   stats=stats2))
+    assert stats2.get("cache_hits") == 1 and stats2.get("calls", 0) == 0, stats2
+
+
 def test_h_429_circuit_breaker_skips_remaining_queries(monkeypatch):
     """Quota exhaustion is per-key: after SERPAPI_BREAKER 429s in one
     request, remaining slot queries must skip HTTP entirely."""

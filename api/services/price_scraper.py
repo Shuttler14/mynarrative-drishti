@@ -118,6 +118,15 @@ async def search_google_shopping(query: str, max_results: int = 10,
         stats["errors"] = stats.get("errors", 0) + 1
         return []
 
+    # Google Shopping actively MATCHES the `-excluded` tokens instead of
+    # filtering them (live probe: 0/20 usable results with exclusions vs
+    # 18/20 without — "blue formal shirt" returned only sequin lehengas).
+    # The occasion/style gates reject that inventory downstream anyway, so
+    # SerpApi gets the query without exclusions; scrapers keep the original
+    # text. Cache keys off the stripped query: variants differing only in
+    # negatives share one fetch (quota is scarce).
+    query = re.sub(r"\s-\S+", "", query)
+
     # RECO-v4.5 — 429 circuit breaker: quota exhaustion is per-key, not
     # per-query. Once this request has burned `SERPAPI_BREAKER` 429s, the
     # remaining slot queries skip the HTTP call entirely instead of piling
