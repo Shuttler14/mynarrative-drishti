@@ -29,7 +29,9 @@
     {"id": "extraction_success", "source": "vton", "metric": "extraction_success_pct", "cmp": ">=", "value": 98.0},
     {"id": "vton_failure", "source": "vton", "metric": "vton_failure_pct", "cmp": "<=", "value": 1.0},
     {"id": "e2e_vton_latency", "source": "vton", "metric": "e2e_vton_ms_p95", "cmp": "<=", "value": 10000},
-    {"id": "garment_leakage", "source": "vton_labels", "metric": "garment_leakage_pct", "cmp": "<=", "value": 2.0, "optional_if_unlabelled": true}
+    {"id": "garment_leakage", "source": "vton_labels", "metric": "garment_leakage_pct", "cmp": "<=", "value": 2.0, "optional_if_unlabelled": true},
+    {"id": "garment_fidelity", "source": "vton_labels", "metric": "garment_fidelity_pct", "cmp": ">=", "value": 90.0, "optional_if_unlabelled": true},
+    {"id": "vton_identity", "source": "vton_labels", "metric": "identity_preservation_pct", "cmp": ">=", "value": 95.0, "optional_if_unlabelled": true}
   ],
   "cost": {
     "_comment": "USD per image — set from your Replicate billing; null = not tracked",

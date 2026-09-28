@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -254,7 +255,14 @@ async def recommend_outfits(
             # Post-process: download inaccessible image URLs (Google Shopping thumbnails)
             # and convert to base64 data URIs so VTON can use them
             recs = result["recommendations"]
+            t_img = time.perf_counter()
             recs = await _make_images_accessible(recs)
+            # RECO-v4.5 — instrument the image pass: it downloads every hero
+            # thumbnail serially and is a prime latency suspect.
+            diag = result.get("reco_diagnostics")
+            if isinstance(diag, dict):
+                diag.setdefault("stage_ms", {})["images_accessible_ms"] = round(
+                    (time.perf_counter() - t_img) * 1000, 1)
             # Add aliases for frontend compatibility
             result["outfits"] = recs
             result["products"] = recs

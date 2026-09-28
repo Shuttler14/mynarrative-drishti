@@ -266,6 +266,13 @@ def _assemble_one(
         # A look without a hero cannot be shown or tried on.
         return None
 
+    # RECO-v4.5 — completeness metadata: which blueprint slots stayed empty.
+    # Accessory is optional (never blocks completeness); a full garment
+    # covers the bottom slot even when the blueprint listed one.
+    missing = [n for n in needs if n not in assign and n != "accessory"]
+    if body_complete and "bottom" in missing:
+        missing.remove("bottom")
+
     sig = look_signature(products, bp)
     scores = [_score_of(p) for p in products] or [0.0]
     return {
@@ -283,6 +290,8 @@ def _assemble_one(
         "score": round(sum(scores) / len(scores), 4),
         "is_variation": bool(bp.get("is_variation")),
         "variation_index": int(bp.get("variation_index", -1)),
+        "is_complete": not missing,
+        "missing_slots": missing,
     }
 
 
@@ -302,6 +311,21 @@ def _similar_title(a: str, b: str) -> bool:
     return bool(union) and (inter / union) > 0.85
 
 
+def _apply_completeness(looks: list[dict]) -> tuple[list[dict], int]:
+    """RECO-v4.5 complete-or-honest policy.
+
+    When at least one COMPLETE look exists, incomplete looks are dropped —
+    fewer correct beats four where some are quietly missing their bottom or
+    shoes. When inventory yields zero complete looks, incompletes are kept
+    but honestly flagged (is_complete=false + missing_slots), never labelled
+    as complete formal outfits.
+    """
+    if any(l.get("is_complete") for l in looks):
+        kept = [l for l in looks if l.get("is_complete")]
+        return kept, len(looks) - len(kept)
+    return looks, 0
+
+
 def assemble_looks(
     candidates: list[dict],
     blueprints: list[dict],
@@ -311,6 +335,7 @@ def assemble_looks(
     exclude_product_ids=(),
     exclude_titles=(),
     enforce_diversity: bool = True,
+    stats_out: dict | None = None,
 ) -> list[dict]:
     """Assemble up to `count` structurally distinct, gate-valid looks.
 
@@ -358,14 +383,24 @@ def assemble_looks(
 
     if not enforce_diversity:
         assembled.sort(key=lambda l: (l.get("variation_index", 0), -l["score"]))
-        return assembled[:count]
+        assembled, inc_drop = _apply_completeness(assembled[:count])
+        if stats_out is not None:
+            stats_out["incomplete_dropped"] = inc_drop
+        return assembled
 
-    # Diversity pass: greedy accept in relevance order. A look whose
-    # skeleton duplicates an accepted one is DROPPED — two archetypes
-    # wearing the same outfit ARE one direction; we never force four and
-    # never relabel a look with products from a different garment family.
-    ordered = sorted(assembled, key=lambda l: -l["score"])
+    # Diversity pass: greedy accept in relevance order — but COMPLETE looks
+    # claim products first, so a bottomless look can never starve a complete
+    # one of the last trousers in the pool. A look whose skeleton duplicates
+    # an accepted one is DROPPED — two archetypes wearing the same outfit ARE
+    # one direction; we never force four and never relabel a look with
+    # products from a different garment family.
+    ordered = sorted(
+        assembled,
+        key=lambda l: (0 if l.get("is_complete") else 1, -l["score"]),
+    )
     accepted: list[dict] = []
+    conflict_drops = 0
+    overlap_drops = 0
 
     def _overlaps(look: dict) -> bool:
         pids = {_pid(p) for p in look["products"]}
@@ -374,10 +409,23 @@ def assemble_looks(
         )
 
     for look in ordered:
-        if not _conflicts(look["signature"], accepted) and not _overlaps(look):
-            accepted.append(look)
+        if _conflicts(look["signature"], accepted):
+            conflict_drops += 1
+            continue
+        if _overlaps(look):
+            overlap_drops += 1
+            continue
+        accepted.append(look)
+
+    if stats_out is not None:
+        stats_out["skeleton_dropped"] = conflict_drops + overlap_drops
+        stats_out["conflict_dropped"] = conflict_drops
+        stats_out["overlap_dropped"] = overlap_drops
 
     accepted.sort(key=lambda l: -l["score"])
+    accepted, inc_drop = _apply_completeness(accepted)
+    if stats_out is not None:
+        stats_out["incomplete_dropped"] = inc_drop
     return accepted[:count]
 
 

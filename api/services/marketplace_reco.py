@@ -11,6 +11,8 @@ import asyncio
 import logging
 import os
 import re
+import time
+import uuid
 
 from api.services.price_scraper import (
     scrape_amazon,
@@ -125,19 +127,35 @@ async def _search_google_shopping_slots(
     slot_queries: list[tuple[str, str]],
     blueprint_map: dict[str, str] | None = None,
     per_query: int = 20,
+    stats: dict | None = None,
 ) -> list[dict]:
     """Run slot-labelled Google Shopping searches in parallel.
 
     Results are fetched unfiltered (raw pool cached per query) — the price
     intelligence layer resolves the band against the live distribution.
+    RECO-v4.5: identical query texts fetch once (a duplicate in-flight call
+    bypasses the cache and burns SerpApi quota) and all counters land in
+    `stats` for request diagnostics.
     """
     from api.services.price_scraper import search_google_shopping
 
-    tasks = [search_google_shopping(query, per_query) for _, query in slot_queries]
+    stats = stats if stats is not None else {}
+    unique: list[tuple[str, str]] = []
+    seen_q: set[str] = set()
+    for slot, query in slot_queries:
+        if query in seen_q:
+            continue
+        seen_q.add(query)
+        unique.append((slot, query))
+    stats["queries_total"] = stats.get("queries_total", 0) + len(slot_queries)
+    stats["queries_unique"] = stats.get("queries_unique", 0) + len(unique)
+
+    tasks = [search_google_shopping(query, per_query, stats=stats)
+             for _, query in unique]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     products: list[dict] = []
-    for (slot, query), result in zip(slot_queries, results):
+    for (slot, query), result in zip(unique, results):
         if isinstance(result, Exception):
             logger.warning(f"Google Shopping slot '{slot}' ('{query}') failed: {result}")
             continue
@@ -150,7 +168,7 @@ async def _search_google_shopping_slots(
     return products
 
 
-async def _scraper_fallback(query: str) -> list[dict]:
+async def _scraper_fallback(query: str, stats: dict | None = None) -> list[dict]:
     """Direct marketplace scrapers when Google Shopping under-delivers.
 
     Each marketplace gets its own deadline — one hung Flipkart retry must not
@@ -158,11 +176,15 @@ async def _scraper_fallback(query: str) -> list[dict]:
     and sent office traffic to the random Shopify hoodie fallback).
     """
     per_scraper = float(os.getenv("SCRAPER_PER_TIMEOUT", "6"))
+    if stats is not None:
+        stats["fallback_calls"] = stats.get("fallback_calls", 0) + 1
 
     async def _one(coro) -> list[dict]:
         try:
             return await asyncio.wait_for(coro, timeout=per_scraper)
         except Exception as exc:
+            if stats is not None:
+                stats["fallback_errors"] = stats.get("fallback_errors", 0) + 1
             logger.debug(f"Scraper partial timeout/err for '{query[:50]}': {exc}")
             return []
 
@@ -175,7 +197,58 @@ async def _scraper_fallback(query: str) -> list[dict]:
     for result in results:
         if isinstance(result, list):
             products.extend(result)
+    if stats is not None:
+        stats["fallback_products"] = stats.get("fallback_products", 0) + len(products)
     return products
+
+
+def _cap_queries_interleaved(
+    slot_queries: list[tuple[str, str]],
+    blueprint_map: dict[str, str],
+    cap: int = 4,
+) -> list[tuple[str, str]]:
+    """RECO-v4.5 — new-user query budget that preserves coverage.
+
+    A blind prefix cut (`[:4]`) kept one blueprint's primary+bottom+shoes
+    plus a second blueprint's BOTTOM while chopping every other archetype's
+    primary — indian office drew a single-kurta pool and shipped 1 look.
+    Keep the first blueprint's complete slot set (one full look needs it),
+    then spend the remaining budget on a PRIMARY from each other blueprint
+    before any non-primary query (round-robin afterwards). Garment families
+    therefore span the queries instead of crowding into one.
+    """
+    if len(slot_queries) <= cap:
+        return slot_queries
+    if not blueprint_map:
+        return slot_queries[:cap]
+
+    groups: dict[str, list[tuple[str, str]]] = {}
+    order: list[str] = []
+    for sq in slot_queries:
+        bp = blueprint_map.get(sq[1].lower()) or f"_ungrouped{len(order)}"
+        if bp not in groups:
+            groups[bp] = []
+            order.append(bp)
+        groups[bp].append(sq)
+
+    picked: list[tuple[str, str]] = list(groups[order[0]][:cap])
+    remaining = [groups[g] for g in order[1:] if groups[g]]
+
+    # One primary per remaining blueprint (blueprint order) — a later
+    # blueprint's top beats an earlier blueprint's second bottom.
+    for g in remaining:
+        if len(picked) >= cap:
+            break
+        prim = next(((s, q) for s, q in g if s == "primary"), None)
+        if prim:
+            picked.append(prim)
+            g.remove(prim)
+    # Round-robin whatever slots are left.
+    while len(picked) < cap and any(remaining):
+        for g in remaining:
+            if g and len(picked) < cap:
+                picked.append(g.pop(0))
+    return picked[:cap]
 
 
 async def search_marketplace_products(
@@ -238,7 +311,10 @@ async def search_marketplace_products(
             if first_style:
                 intent["style_query_terms"] = frules.style_query_terms(first_style)
 
-    # Outfit blueprint → slot queries (occasions-aware, with exclusions)
+    # ── Outfit blueprint → slot queries (occasions-aware, with exclusions)
+    t0 = time.perf_counter()
+    stages: dict[str, float] = {}
+    search_stats: dict = {}
     blueprints: list[dict] = []
     try:
         if variation_parent:
@@ -259,20 +335,33 @@ async def search_marketplace_products(
         logger.warning(f"Blueprint generation failed: {exc}")
 
     if variation_parent:
-        slot_queries = look_assembly.compile_variation_queries(blueprints, intent, max_queries=9)
+        all_slot_queries = look_assembly.compile_variation_queries(
+            blueprints, intent, max_queries=9)
+        slot_queries = all_slot_queries
         if not user_id and len(slot_queries) > 5:
-            slot_queries = slot_queries[:5]
+            slot_queries = _cap_queries_interleaved(
+                slot_queries, intent.get("blueprint_query_map") or {}, cap=5)
     else:
-        slot_queries = build_slot_queries(intent, count=count, max_queries=8)
-        # New users (no user_id) / thin count → simple query set so first results
-        # land fast: one blueprint's primary+bottom+shoes is enough to show a look.
+        all_slot_queries = build_slot_queries(intent, count=count, max_queries=8)
+        slot_queries = all_slot_queries
+        # New users (no user_id) / thin count → smaller query budget so
+        # first results land fast — but the cap KEEPS a primary per
+        # blueprint family (RECO-v4.5): a prefix cut shipped a single-
+        # garment-family pool and 1 look for indian office.
         if not user_id and count <= 6:
-            slot_queries = slot_queries[:4]
+            slot_queries = _cap_queries_interleaved(
+                slot_queries, intent.get("blueprint_query_map") or {}, cap=4)
     blueprint_map: dict[str, str] = intent.get("blueprint_query_map") or {}
+    fetched_queries = {q for _, q in slot_queries}
+    stages["intent_queries_ms"] = round((time.perf_counter() - t0) * 1000, 1)
     logger.info(f"Slot queries: {slot_queries} (budget mode: {intent.get('budget_mode')})")
 
-    products = await _search_google_shopping_slots(slot_queries, blueprint_map)
+    t = time.perf_counter()
+    products = await _search_google_shopping_slots(
+        slot_queries, blueprint_map, stats=search_stats)
+    stages["google_ms"] = round((time.perf_counter() - t) * 1000, 1)
 
+    t_stage = time.perf_counter()
     if len(products) < max(6, count):
         logger.info(f"Google Shopping under-delivered ({len(products)}), using slot-aware scraper fallback")
         by_slot: dict[str, int] = {}
@@ -280,7 +369,15 @@ async def search_marketplace_products(
             s = p.get("query_slot") or "primary"
             by_slot[s] = by_slot.get(s, 0) + 1
         seen = {(p.get("source"), p.get("product_id")) for p in products}
-        targets = {"primary": 4, "bottom": 2, "shoes": 2, "accessory": 1}
+        # RECO-v4.5 — fallback budgets scale with look demand (was flat 2/2):
+        # with google under-delivering, two bottoms in the whole pool meant
+        # only two complete looks could ever assemble. Zero extra network —
+        # the scrapers already return up to 5 items per query; this only
+        # stops the merge from truncating scarce slots.
+        looks_demand = min(4, max(count, 2))
+        targets = {"primary": max(4, looks_demand),
+                   "bottom": looks_demand, "shoes": looks_demand,
+                   "accessory": 1}
         slots_in_queries = {sq[0] for sq in slot_queries}
 
         # Parallel fill: all under-target slot scrapers at once (was sequential —
@@ -297,7 +394,8 @@ async def search_marketplace_products(
         deadline = float(os.getenv("SCRAPER_TOTAL_TIMEOUT", "0")) or (
             10.0 if not user_id else 15.0
         )
-        tasks = [asyncio.create_task(_scraper_fallback(q)) for _, q in pending]
+        tasks = [asyncio.create_task(_scraper_fallback(q, search_stats))
+                 for _, q in pending]
         if tasks:
             done, _still = await asyncio.wait(tasks, timeout=deadline)
             fetched = []
@@ -310,7 +408,12 @@ async def search_marketplace_products(
         else:
             fetched = []
 
-        # Merge bottom → shoes → primary so scarce slots claim inventory first
+        # RECO-v4.5 — round-robin interleave (was: bottom→shoes→primary
+        # batch order, which let ONE primary query's ethnic tops fill the
+        # pool before a shirt query contributed a single item). Scarce slots
+        # still claim first by priority, but within the merge each pending
+        # query contributes one item per pass — every garment family lands
+        # before any family gets seconds.
         slot_priority = {"bottom": 0, "shoes": 1, "primary": 2, "accessory": 3}
         merged: list[tuple[str, str, list[dict]]] = []
         for (slot, query), result in zip(pending, fetched):
@@ -320,30 +423,48 @@ async def search_marketplace_products(
             merged.append((slot, query, result))
         merged.sort(key=lambda item: slot_priority.get(item[0], 9))
 
-        for slot, query, fallback in merged:
+        cursors = [0] * len(merged)
+        per_query_added = [0] * len(merged)
+
+        def _take_one(i: int) -> bool:
+            slot, query, items = merged[i]
             target = targets.get(slot, 2)
             max_add = max(target, 3) if slot != "primary" else 6
-            added = 0
-            bp_id = blueprint_map.get(query.lower(), "")
-            for p in fallback:
-                if by_slot.get(slot, 0) >= target and slot != "primary":
-                    break
+            if per_query_added[i] >= max_add:
+                return False
+            if by_slot.get(slot, 0) >= target and slot != "primary":
+                return False
+            while cursors[i] < len(items):
+                p = items[cursors[i]]
+                cursors[i] += 1
                 key = (p.get("source"), p.get("product_id"))
                 if key in seen:
                     continue
                 seen.add(key)
+                bp_id = blueprint_map.get(query.lower(), "")
                 p.setdefault("query_slot", slot)
                 if bp_id:
                     p["blueprint_id"] = bp_id
                 products.append(p)
                 by_slot[slot] = by_slot.get(slot, 0) + 1
-                added += 1
-                if added >= max_add:
-                    break
-        logger.info(f"Slot-aware fallback done: by_slot={by_slot}, total={len(products)}")
+                per_query_added[i] += 1
+                return True
+            return False
 
+        while True:
+            pass_added = False
+            for i in range(len(merged)):
+                if _take_one(i):
+                    pass_added = True
+            if not pass_added:
+                break
+        logger.info(f"Slot-aware fallback done: by_slot={by_slot}, total={len(products)}")
+    stages["fallback_ms"] = round((time.perf_counter() - t_stage) * 1000, 1)
+
+    t_stage = time.perf_counter()
     for p in products:
         enrich_product(p)
+    stages["enrich_ms"] = round((time.perf_counter() - t_stage) * 1000, 1)
 
     # Variation history: never re-serve products already shown this session.
     ex_keys = {
@@ -358,7 +479,77 @@ async def search_marketplace_products(
                     if (p.get("source", ""), p.get("product_id")) not in ex_keys
                     and str(p.get("product_id") or "") not in ex_id_strs]
 
+    t_stage = time.perf_counter()
     result = recommend_products(products, intent, count)
+    stages["filter_score_ms"] = round((time.perf_counter() - t_stage) * 1000, 1)
+
+    # ── RECO-v4.5 gate-aware retrieval top-up ────────────────────────────
+    # Google can clear the RAW threshold while gate attrition leaves too few
+    # VALID candidates (live: indian office → 20 raw ethnic tops → 3 valid →
+    # 1 look). Before accepting the thin pool, spend ONE bounded round on the
+    # queries the new-user budget cut (shirt/blazer families never fetched).
+    valid_n = len(result.get("candidates") or result.get("selected") or [])
+    if valid_n < max(6, count):
+        unused = [(s, q) for s, q in all_slot_queries
+                  if q not in fetched_queries][:4]
+        if unused:
+            logger.info(
+                f"Valid pool thin ({valid_n} < {max(6, count)}) — top-up "
+                f"round over {len(unused)} unfetched blueprint queries")
+            search_stats["topup_queries"] = (
+                search_stats.get("topup_queries", 0) + len(unused))
+            deadline = float(os.getenv("SCRAPER_TOPUP_TIMEOUT", "0")) or (
+                8.0 if not user_id else 12.0
+            )
+            t_stage = time.perf_counter()
+            tasks = [asyncio.create_task(_scraper_fallback(q, search_stats))
+                     for _, q in unused]
+            done, _still = await asyncio.wait(tasks, timeout=deadline)
+            fetched = []
+            for tk in tasks:
+                if tk.done() and not tk.cancelled():
+                    fetched.append(tk.exception() or tk.result())
+                else:
+                    tk.cancel()
+                    fetched.append(asyncio.TimeoutError(
+                        f"topup exceeded {deadline}s"))
+            stages["topup_ms"] = round((time.perf_counter() - t_stage) * 1000, 1)
+
+            existing = {(p.get("source", ""), p.get("product_id", ""))
+                        for p in products} | ex_keys
+            fresh: list[dict] = []
+            for (slot, q), res in zip(unused, fetched):
+                if isinstance(res, Exception):
+                    logger.warning(f"Top-up '{slot}' failed: {res}")
+                    continue
+                bp_id = blueprint_map.get(q.lower(), "")
+                added = 0
+                for p in res:
+                    key = (p.get("source"), p.get("product_id"))
+                    if (key in existing or key in ex_keys
+                            or str(p.get("product_id") or "") in ex_id_strs):
+                        continue
+                    existing.add(key)
+                    p.setdefault("query_slot", slot)
+                    if bp_id:
+                        p["blueprint_id"] = bp_id
+                    products.append(p)
+                    fresh.append(p)
+                    added += 1
+                    if added >= 4:
+                        break
+            if fresh:
+                search_stats["topup_products"] = (
+                    search_stats.get("topup_products", 0) + len(fresh))
+                for p in fresh:
+                    enrich_product(p)
+                t_stage = time.perf_counter()
+                result = recommend_products(products, intent, count)
+                stages["filter_score_ms"] = round(
+                    stages.get("filter_score_ms", 0)
+                    + (time.perf_counter() - t_stage) * 1000, 1)
+                logger.info(f"Top-up added {len(fresh)} items → "
+                            f"{len(result.get('candidates') or [])} valid")
 
     # Coverage guarantee: one flaky scrape draw can deliver zero usable body
     # garments (slot fill has nothing to pull from) → outfit ships without a
@@ -373,6 +564,15 @@ async def search_marketplace_products(
             missing.append("primary")
         if not (slots & {"bottom", "full"}):
             missing.append("bottom")
+        # RECO-v4.5 — flaky scrapers can deliver bodies but zero footwear;
+        # a draw with NO shoes anywhere in the pool can only assemble
+        # incomplete looks, so the shoes query gets its ONE bounded
+        # re-scrape (pool-based: a low-scored shoe in `selected` is fine —
+        # assembly scans all candidates).
+        if not (slots & {"shoes"}) and not any(
+                (p.get("fashion") or {}).get("slot") == "shoes"
+                for p in products):
+            missing.append("shoes")
         return missing
 
     missing = _missing_body_slots(result.get("selected") or [])
@@ -387,8 +587,11 @@ async def search_marketplace_products(
         retry = [(s, q) for s, q in slot_queries if s in want]
         if retry:
             logger.info(f"Slot coverage retry: re-scraping {sorted(missing)}")
+            search_stats["coverage_retry_queries"] = (
+                search_stats.get("coverage_retry_queries", 0) + len(retry))
+            t_stage = time.perf_counter()
             done = await asyncio.gather(
-                *[_scraper_fallback(q) for _, q in retry],
+                *[_scraper_fallback(q, search_stats) for _, q in retry],
                 return_exceptions=True,
             )
             existing = {(p.get("source"), p.get("product_id")) for p in products}
@@ -423,9 +626,16 @@ async def search_marketplace_products(
                 still = _missing_body_slots(result.get("selected") or [])
                 if still:
                     logger.warning(f"Slot coverage retry still missing {sorted(still)}")
+            stages["coverage_retry_ms"] = round(
+                (time.perf_counter() - t_stage) * 1000, 1)
 
+    stages["total_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    search_stats["pool_size"] = len(products)
+    search_stats["valid_candidates"] = len(result.get("candidates") or [])
     result["intent"] = intent
     result["blueprints"] = intent.get("blueprints", [])
+    result["search_stats"] = search_stats
+    result["stage_ms"] = stages
     return result
 
 
@@ -446,6 +656,8 @@ def _format_look(look: dict) -> dict:
         "is_variation": look.get("is_variation", False),
         "variation_index": look.get("variation_index", -1),
         "signature": look.get("signature", {}),
+        "is_complete": bool(look.get("is_complete", True)),
+        "missing_slots": list(look.get("missing_slots") or []),
     }
     out["products"] = [_format_product_for_reco(p) for p in look.get("products", [])]
     out["total_price"] = sum(p.get("price") or 0 for p in out["products"])
@@ -478,7 +690,9 @@ async def get_marketplace_recommendations(
     from api.services.price_intelligence import (
         band_label, distribution_by_slot, quick_picks, rank_brands,
     )
+    from api.services.reco_version import RECO_VERSION
 
+    t_entry = time.perf_counter()
     result = await search_marketplace_products(
         occasion=occasion,
         style=style,
@@ -512,6 +726,8 @@ async def get_marketplace_recommendations(
     # ── Look assembly layer (RECO-v4.4) ────────────────────────────────
     # Four structurally distinct outfits from the scored pool; products are
     # unique across looks and duplicate skeletons are dropped (never forced).
+    assembly_stats: dict = {}
+    t_assemble = time.perf_counter()
     assembled = look_assembly.assemble_looks(
         candidates,
         blueprints,
@@ -520,8 +736,10 @@ async def get_marketplace_recommendations(
         exclude_product_ids=exclude_product_ids,
         exclude_titles=exclude_titles,
         enforce_diversity=not bool(variation_parent),
+        stats_out=assembly_stats,
     )
     looks = [_format_look(lk) for lk in assembled]
+    assemble_ms = round((time.perf_counter() - t_assemble) * 1000, 1)
 
     if looks:
         # Flat contract (backward compat) = union of look products in look
@@ -542,12 +760,40 @@ async def get_marketplace_recommendations(
     brand_pool = candidates if len(candidates) >= 10 else selected
     ranked_brands = rank_brands(brand_pool, band=band, limit=8)
 
+    # ── RECO-v4.5 request diagnostics ───────────────────────────────────
+    # P50/P95/P99 aggregation happens client-side (bench/matrix) over these
+    # per-stage timings — profile before touching any latency knob.
+    stage_ms = dict(result.get("stage_ms") or {})
+    for k in ("fallback_ms", "topup_ms", "coverage_retry_ms", "enrich_ms",
+              "filter_score_ms", "google_ms", "intent_queries_ms"):
+        stage_ms.setdefault(k, 0.0)
+    stage_ms["assemble_ms"] = assemble_ms
+    stage_ms["search_total_ms"] = stage_ms.get("total_ms", 0.0)
+    stage_ms["total_ms"] = round((time.perf_counter() - t_entry) * 1000, 1)
+    reco_diagnostics = {
+        "request_id": uuid.uuid4().hex[:12],
+        "reco_version": RECO_VERSION,
+        "stage_ms": stage_ms,
+        "search": dict(result.get("search_stats") or {}),
+        "counts": {
+            "pool_size": (result.get("search_stats") or {}).get("pool_size", 0),
+            "candidates": len(candidates),
+            "selected": len(selected),
+            "looks": len(looks),
+            "complete_looks": sum(1 for lk in looks if lk.get("is_complete")),
+            "blueprints": len(blueprints),
+            "duplicate_skeletons_removed": assembly_stats.get("skeleton_dropped", 0),
+            "incomplete_dropped": assembly_stats.get("incomplete_dropped", 0),
+        },
+    }
+
     return {
         "recommendations": recommendations,
         "count": len(recommendations),
         "source": "fashion_engine",
         "platforms_searched": ["google_shopping", "amazon", "myntra", "flipkart"],
         "looks": looks or blueprints,
+        "reco_diagnostics": reco_diagnostics,
         "outfit_validation": {
             "passed": validation.get("passed", True),
             "confidence": validation.get("confidence", 0.5),

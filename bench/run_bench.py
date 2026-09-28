@@ -585,9 +585,15 @@ def run_metrics():
 # ────────────────────────────── 5. scorecard ──────────────────────────────
 
 def _label_metrics(vton_res):
-    """Aggregate human labels from golden vton_cases (if any were filled)."""
+    """Aggregate human labels from golden vton_cases (if any were filled).
+
+    RECO-v4.5 — 7 dimensions (see bench/label_vton.py): garment_fidelity,
+    leakage_pct, identity_ok, body_preservation, boundary_quality,
+    artifacts (count), overall. Returns {} (→ NO-DATA) until at least one
+    case carries labelled_by — never invents a score.
+    """
     cases = json.loads((GOLDEN / "vton_cases.json").read_text())["cases"]
-    fid, leak, ident, n = [], [], [], 0
+    fid, leak, ident, body, bnd, overall, clean, n = [], [], [], [], [], [], [], 0
     for c in cases:
         lb = c.get("labels") or {}
         if lb.get("labelled_by") is None:
@@ -599,6 +605,14 @@ def _label_metrics(vton_res):
             leak.append(float(lb["leakage_pct"]))
         if lb.get("identity_ok") is not None:
             ident.append(1 if lb["identity_ok"] else 0)
+        if lb.get("body_preservation") is not None:
+            body.append(float(lb["body_preservation"]))
+        if lb.get("boundary_quality") is not None:
+            bnd.append(float(lb["boundary_quality"]))
+        if lb.get("overall") is not None:
+            overall.append(float(lb["overall"]))
+        if lb.get("artifacts") is not None:
+            clean.append(1 if int(lb["artifacts"]) == 0 else 0)
     if not n:
         return {}
     out = {"labelled_n": n}
@@ -608,6 +622,14 @@ def _label_metrics(vton_res):
         out["garment_leakage_pct"] = round(sum(leak) / len(leak), 2)
     if ident:
         out["identity_preservation_pct"] = round(100 * sum(ident) / len(ident), 2)
+    if body:
+        out["body_preservation_pct"] = round(sum(body) / len(body), 2)
+    if bnd:
+        out["boundary_quality_pct"] = round(sum(bnd) / len(bnd), 2)
+    if overall:
+        out["overall_visual_pct"] = round(sum(overall) / len(overall), 2)
+    if clean:
+        out["artifacts_free_pct"] = round(100 * sum(clean) / len(clean), 2)
     return out
 
 
@@ -675,6 +697,10 @@ def run_scorecard(strict=False):
           f"  (labelled n={labels.get('labelled_n', 0)})")
     print(f"  Garment leakage         {fmt(labels.get('garment_leakage_pct'), '%')}")
     print(f"  Identity preservation   {fmt(labels.get('identity_preservation_pct'), '%')}")
+    print(f"  Body preservation       {fmt(labels.get('body_preservation_pct'), '%')}")
+    print(f"  Boundary quality        {fmt(labels.get('boundary_quality_pct'), '%')}")
+    print(f"  Artifacts free          {fmt(labels.get('artifacts_free_pct'), '%')}")
+    print(f"  Overall visual          {fmt(labels.get('overall_visual_pct'), '%')}")
 
     # ── gate evaluation
     print("─" * 62)

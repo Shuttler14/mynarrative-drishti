@@ -1,45 +1,121 @@
 {
-  "_comment": "VTON golden dataset (seed). Schema is fixed — extend to 500-2000 cases over time covering gender/body/ethnicity/garment-category/pose/background diversity. person/garment: {url} or {file: images/*.jpg}. labels{} are HUMAN-SCORED (0-100 fidelity, leakage_pct = unwanted garment pixels %, identity_ok bool, artifacts notes); scorecard computes their gates only when labelled. bench: extract endpoint used per case (upload endpoint for files — always fresh, measures true latency).",
-  "cases": [
-    {
-      "id": "v01",
-      "person": {"url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"},
-      "garment": {"url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/urban-streetwear-style-hoodie-mockup-with-oversized-back-view-and-minimalist-background-0864_2_9bc11b99-0969-45d9-96f1-3e56b22b5428.jpg?v=1755175747", "extract": true, "garment_type": "top"},
-      "category": "top",
-      "notes": "hoodie on model — extraction must drop the model's pants (the original pant-bleed bug case)",
-      "labels": {"garment_fidelity": null, "leakage_pct": null, "identity_ok": null, "artifacts": null, "labelled_by": null}
-    },
-    {
-      "id": "v02",
-      "person": {"url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"},
-      "garment": {"file": "images/myn1.jpg", "extract": true},
-      "category": "top",
-      "notes": "Myntra full model shot (b3 band crop should keep top only)",
-      "labels": {"garment_fidelity": null, "leakage_pct": null, "identity_ok": null, "artifacts": null, "labelled_by": null}
-    },
-    {
-      "id": "v03",
-      "person": {"url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"},
-      "garment": {"file": "images/myn3.jpg", "extract": true},
-      "category": "top",
-      "notes": "second Myntra shot — band boundary different framing",
-      "labels": {"garment_fidelity": null, "leakage_pct": null, "identity_ok": null, "artifacts": null, "labelled_by": null}
-    },
-    {
-      "id": "v04",
-      "person": {"file": "images/myn2.jpg"},
-      "garment": {"file": "images/real1.jpg", "extract": true},
-      "category": "top",
-      "notes": "local person (data URI) + local hoodie product — no-CDN dependency case",
-      "labels": {"garment_fidelity": null, "leakage_pct": null, "identity_ok": null, "artifacts": null, "labelled_by": null}
-    },
-    {
-      "id": "v05",
-      "person": {"url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"},
-      "garment": {"file": "images/real2.jpg", "extract": true},
-      "category": "top",
-      "notes": "second local hoodie — variation in product photography",
-      "labels": {"garment_fidelity": null, "leakage_pct": null, "identity_ok": null, "artifacts": null, "labelled_by": null}
-    }
-  ]
+ "_comment": "RECO-v4.5 human-label eval: fill via bench/label_vton.py. Scores: garment_fidelity/body_preservation/boundary_quality/overall = 0-100, leakage_pct = 0-100, identity_ok = bool, artifacts = int count (0=clean). All null = NO-DATA — gates stay NO-DATA until labelled_by is set.",
+ "cases": [
+  {
+   "id": "v01",
+   "person": {
+    "url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"
+   },
+   "garment": {
+    "url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/urban-streetwear-style-hoodie-mockup-with-oversized-back-view-and-minimalist-background-0864_2_9bc11b99-0969-45d9-96f1-3e56b22b5428.jpg?v=1755175747",
+    "extract": true,
+    "garment_type": "top"
+   },
+   "category": "top",
+   "notes": "hoodie on model — extraction must drop the model's pants (the original pant-bleed bug case)",
+   "labels": {
+    "garment_fidelity": null,
+    "leakage_pct": null,
+    "identity_ok": null,
+    "artifacts": null,
+    "labelled_by": null,
+    "body_preservation": null,
+    "boundary_quality": null,
+    "overall": null,
+    "labelled_at": null
+   }
+  },
+  {
+   "id": "v02",
+   "person": {
+    "url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"
+   },
+   "garment": {
+    "file": "images/myn1.jpg",
+    "extract": true
+   },
+   "category": "top",
+   "notes": "Myntra full model shot (b3 band crop should keep top only)",
+   "labels": {
+    "garment_fidelity": null,
+    "leakage_pct": null,
+    "identity_ok": null,
+    "artifacts": null,
+    "labelled_by": null,
+    "body_preservation": null,
+    "boundary_quality": null,
+    "overall": null,
+    "labelled_at": null
+   }
+  },
+  {
+   "id": "v03",
+   "person": {
+    "url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"
+   },
+   "garment": {
+    "file": "images/myn3.jpg",
+    "extract": true
+   },
+   "category": "top",
+   "notes": "second Myntra shot — band boundary different framing",
+   "labels": {
+    "garment_fidelity": null,
+    "leakage_pct": null,
+    "identity_ok": null,
+    "artifacts": null,
+    "labelled_by": null,
+    "body_preservation": null,
+    "boundary_quality": null,
+    "overall": null,
+    "labelled_at": null
+   }
+  },
+  {
+   "id": "v04",
+   "person": {
+    "file": "images/myn2.jpg"
+   },
+   "garment": {
+    "file": "images/real1.jpg",
+    "extract": true
+   },
+   "category": "top",
+   "notes": "local person (data URI) + local hoodie product — no-CDN dependency case",
+   "labels": {
+    "garment_fidelity": null,
+    "leakage_pct": null,
+    "identity_ok": null,
+    "artifacts": null,
+    "labelled_by": null,
+    "body_preservation": null,
+    "boundary_quality": null,
+    "overall": null,
+    "labelled_at": null
+   }
+  },
+  {
+   "id": "v05",
+   "person": {
+    "url": "https://cdn.shopify.com/s/files/1/0680/5762/8864/files/soft-shadow-hoodie-mockup-apparel-on-male-model-against-muted-studio-background-0464_4.jpg?v=1755439032"
+   },
+   "garment": {
+    "file": "images/real2.jpg",
+    "extract": true
+   },
+   "category": "top",
+   "notes": "second local hoodie — variation in product photography",
+   "labels": {
+    "garment_fidelity": null,
+    "leakage_pct": null,
+    "identity_ok": null,
+    "artifacts": null,
+    "labelled_by": null,
+    "body_preservation": null,
+    "boundary_quality": null,
+    "overall": null,
+    "labelled_at": null
+   }
+  }
+ ]
 }

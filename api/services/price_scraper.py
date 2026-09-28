@@ -85,43 +85,92 @@ async def _fetch_with_retry(url: str, headers: dict, max_retries: int = 1, timeo
 # GOOGLE SHOPPING VIA SERPAPI — Primary price comparison
 # ══════════════════════════════════════════════════════════════
 
+# RECO-v4.5 — bounded concurrency: slot search gathers up to 8 queries in
+# parallel; an unbounded burst is exactly what earns SerpApi 429s.
+_SERPAPI_MAX_CONCURRENCY = max(1, int(os.getenv("SERPAPI_CONCURRENCY", "3")))
+_serpapi_sem: asyncio.Semaphore | None = None
+
+
+def _get_serpapi_sem() -> asyncio.Semaphore:
+    global _serpapi_sem
+    if _serpapi_sem is None:
+        _serpapi_sem = asyncio.Semaphore(_SERPAPI_MAX_CONCURRENCY)
+    return _serpapi_sem
+
+
 async def search_google_shopping(query: str, max_results: int = 10,
                                   min_price: int | None = None,
-                                  max_price: int | None = None) -> list[dict]:
+                                  max_price: int | None = None,
+                                  stats: dict | None = None) -> list[dict]:
     """Search Google Shopping via SerpApi. Returns products with prices from all platforms.
 
     NOTE: SerpApi's native min_price/max_price params return zero results with
     gl=in, so the price band is applied client-side after fetching. Raw results
     are cached per query — different bands share the same cached fetch.
+
+    RECO-v4.5 reliability: at most 2 HTTP attempts per query (one retry on
+    429/5xx with a short backoff), a concurrency semaphore, and optional
+    `stats` counters for request diagnostics. Never caches failures.
     """
+    stats = stats if stats is not None else {}
     if not SERPAPI_KEY:
         logger.warning("SerpApi key not configured")
+        stats["errors"] = stats.get("errors", 0) + 1
+        return []
+
+    # RECO-v4.5 — 429 circuit breaker: quota exhaustion is per-key, not
+    # per-query. Once this request has burned `SERPAPI_BREAKER` 429s, the
+    # remaining slot queries skip the HTTP call entirely instead of piling
+    # on retries (live: 4 queries × 2 attempts = 8 wasted 429s).
+    breaker = int(os.getenv("SERPAPI_BREAKER", "4"))
+    if stats.get("status_429", 0) >= breaker:
+        stats["breaker_skips"] = stats.get("breaker_skips", 0) + 1
         return []
 
     cached = _get_cached("google_shopping", query)
     if cached:
+        stats["cache_hits"] = stats.get("cache_hits", 0) + 1
         products = cached.get("products", [])
     else:
-        try:
-            async with httpx.AsyncClient(timeout=25) as client:
-                r = await client.get("https://serpapi.com/search", params={
-                    "engine": "google_shopping",
-                    "q": query,
-                    "gl": "in",
-                    "hl": "en",
-                    "api_key": SERPAPI_KEY,
-                })
-                if r.status_code != 200:
+        products = []
+        max_attempts = 2
+        async with _get_serpapi_sem():
+            for attempt in range(max_attempts):
+                stats["calls"] = stats.get("calls", 0) + 1
+                try:
+                    async with httpx.AsyncClient(timeout=25) as client:
+                        r = await client.get("https://serpapi.com/search", params={
+                            "engine": "google_shopping",
+                            "q": query,
+                            "gl": "in",
+                            "hl": "en",
+                            "api_key": SERPAPI_KEY,
+                        })
+                    if r.status_code == 200:
+                        products = _parse_shopping_results(r.json())
+                        break
                     logger.warning(f"SerpApi: HTTP {r.status_code}")
-                    return []
-                data = r.json()
-        except Exception as e:
-            logger.warning(f"SerpApi error: {e}")
-            return []
+                    if r.status_code == 429:
+                        stats["status_429"] = stats.get("status_429", 0) + 1
+                    else:
+                        stats["errors"] = stats.get("errors", 0) + 1
+                    if r.status_code not in (429, 500, 502, 503, 504):
+                        break  # client error — retrying won't help
+                    if r.status_code == 429 and stats.get("status_429", 0) > 1:
+                        # Another 429 already landed in THIS request: quota
+                        # exhaustion is persistent, not a burst — a second
+                        # attempt just burns quota. The breaker stops the rest.
+                        break
+                except Exception as e:
+                    logger.warning(f"SerpApi error: {e}")
+                    stats["errors"] = stats.get("errors", 0) + 1
+                if attempt < max_attempts - 1:
+                    stats["retries"] = stats.get("retries", 0) + 1
+                    await asyncio.sleep(0.35 * (attempt + 1))
 
-        products = _parse_shopping_results(data)
         if products:
             _set_cache("google_shopping", query, {"products": products})
+            stats["products"] = stats.get("products", 0) + len(products)
 
     if min_price or max_price:
         lo = min_price or 0
